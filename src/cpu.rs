@@ -5,6 +5,16 @@ fn mask(opcode: u16, mask: u16) -> usize {
     (opcode & mask) as usize
 }
 
+#[inline]
+fn lsb(n: u8) -> u8 {
+    n & 0x01
+}
+
+#[inline]
+fn msb(n: u8) -> u8 {
+    n & 0x80
+}
+
 pub struct Cpu {
     halted: bool,
     memory: [u8; 4096],
@@ -94,23 +104,38 @@ impl Cpu {
             0xa000 => Cpu::ld,
             0xd000 => Cpu::drw,
             0xf000 => Cpu::ld_vx_i,
+            0xa000 => Cpu::nop,
+            0xb000 => Cpu::nop,
+            0xc000 => Cpu::nop,
+            0xd000 => Cpu::nop,
             _ => op
         };
         let op = match opcode & 0xf00f {
             0x5000 => Cpu::se_vx_vy,
-            0x8000 => Cpu::nop,
-            0x8001 => Cpu::nop,
-            0x8002 => Cpu::nop,
-            0x8003 => Cpu::nop,
+            0x8000 => Cpu::ld_vx_vy,
+            0x8001 => Cpu::or,
+            0x8002 => Cpu::and,
+            0x8003 => Cpu::xor,
             0x8004 => Cpu::add_vx_vy,
-            0x8005 => Cpu::nop,
-            0x8006 => Cpu::nop,
-            0x8007 => Cpu::nop,
-            0x800e => Cpu::nop,
+            0x8005 => Cpu::sub_vx_vy,
+            0x8006 => Cpu::shr,
+            0x8007 => Cpu::subn,
+            0x800e => Cpu::shl,
+            0x9000 => Cpu::sne_vx_vy,
             _ => op
         };
         let op = match opcode & 0xf0ff {
             0xf01e => Cpu::add_i_vx,
+            0xe0a1 => Cpu::nop,
+            0xf007 => Cpu::nop,
+            0xf00a => Cpu::nop,
+            0xf015 => Cpu::nop,
+            0xf018 => Cpu::nop,
+            0xf01e => Cpu::nop,
+            0xf029 => Cpu::nop,
+            0xf033 => Cpu::nop,
+            0xf055 => Cpu::nop,
+            0xf065 => Cpu::nop,
             _ => op
         };
         op
@@ -125,22 +150,20 @@ impl Cpu {
         self.halt();
     }
 
-    fn add_i_vx(&mut self, opcode: u16) {
-        let vx = (opcode & 0x0f00) >> 8;
-        let v = self.v[vx as usize];
-        self.i = self.i.saturating_add(v as u16);
+    fn add_vx_kk(&mut self, opcode: u16) {
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let kk = mask(opcode, 0x00ff) as u8;
+        self.v[vx] = self.v[vx].wrapping_add(kk);
         self.step(2);
-        log!("add i, v{:x}", v);
+        log!("add v{:x}, {:02x}", vx, kk);
     }
 
-    fn add_vx_vy(&mut self, opcode: u16) {
+    fn add_i_vx(&mut self, opcode: u16) {
         let vx = mask(opcode, 0x0f00) >> 8;
-        let vy = mask(opcode, 0x00f0) >> 4;
-        let sum = (self.v[vx] as usize) + (self.v[vy] as usize);
-        self.v[0xf] = if sum > 0xff { 1 } else { 0 };
-        self.v[vx] = sum as u8;
+        let v = self.v[vx as usize];
+        self.i = self.i.wrapping_add(v as u16);
         self.step(2);
-        log!("add v{:x}, v{:x}", vx, vy);
+        log!("add i, v{:x}", v);
     }
     
     fn nop(&mut self, opcode: u16) {
@@ -171,21 +194,110 @@ impl Cpu {
     }
 
     fn se_vx_kk(&mut self, opcode: u16) {
-        let vx = ((opcode & 0x0f00) >> 8) as usize;
-        let kk = (opcode & 0x00ff) as u8;
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let kk = mask(opcode, 0x00ff) as u8;
         if self.v[vx] == kk {
             self.step(2);
         }
         self.step(2);
     }
 
+    fn ld_vx_vy(&mut self, opcode: u16) {
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let vy = mask(opcode, 0x00f0) >> 4;
+        self.v[vx] = self.v[vy];
+        self.step(2);
+        log!("ld v{:x}, v{:x}", vx, vy);
+    }
+
+    fn or(&mut self, opcode: u16) {
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let vy = mask(opcode, 0x00f0) >> 4;
+        self.v[vx] = self.v[vx] | self.v[vy];
+        self.step(2);
+        log!("or v{:x}, v{:x}", vx, vy);
+    }
+
+    fn and(&mut self, opcode: u16) {
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let vy = mask(opcode, 0x00f0) >> 4;
+        self.v[vx] = self.v[vx] & self.v[vy];
+        self.step(2);
+        log!("and v{:x}, v{:x}", vx, vy);
+    }
+
+    fn xor(&mut self, opcode: u16) {
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let vy = mask(opcode, 0x00f0) >> 4;
+        self.v[vx] = self.v[vx] ^ self.v[vy];
+        self.step(2);
+        log!("xor v{:x}, v{:x}", vx, vy);
+    }
+
+    fn add_vx_vy(&mut self, opcode: u16) {
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let vy = mask(opcode, 0x00f0) >> 4;
+        let sum = (self.v[vx] as usize) + (self.v[vy] as usize);
+        self.v[0xf] = if sum > 0xff { 1 } else { 0 };
+        self.v[vx] = sum as u8;
+        self.step(2);
+        log!("add v{:x}, v{:x}", vx, vy);
+    }
+
+    fn sub_vx_vy(&mut self, opcode: u16) {
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let vy = mask(opcode, 0x00f0) >> 4;
+        self.v[0xf] = if self.v[vx] > self.v[vy] { 1 } else { 0 };
+        self.v[vx] = self.v[vx].wrapping_sub(self.v[vy]);
+        self.step(2);
+        log!("sub v{:x}, v{:x}", vx, vy);
+    }
+
+    fn shr(&mut self, opcode: u16) {
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let vy = mask(opcode, 0x00f0) >> 4;
+        self.v[0xf] = if lsb(self.v[vx]) == 0x001 { 1 } else { 0 };
+        self.v[vx] = self.v[vx].wrapping_shr(1);
+        self.step(2);
+        log!("shr v{:x}", vx);
+    }
+
+    fn subn(&mut self, opcode: u16) {
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let vy = mask(opcode, 0x00f0) >> 4;
+        self.v[0xf] = if self.v[vy] > self.v[vx] { 1 } else { 0 };
+        self.v[vx] = self.v[vy].wrapping_sub(self.v[vx]);
+        self.step(2);
+        log!("subn v{:x}, v{:x}", vx, vy);
+    }
+
+    fn shl(&mut self, opcode: u16) {
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let vy = mask(opcode, 0x00f0) >> 4;
+        self.v[0xf] = if msb(self.v[vx]) == 0x80 { 1 } else { 0 };
+        self.v[vx] = self.v[vx].wrapping_shl(1);
+        self.step(2);
+        log!("shl v{:x}", vx);
+    }
+
+    fn sne_vx_vy(&mut self, opcode: u16) {
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let vy = mask(opcode, 0x00f0) >> 4;
+        if (self.v[vx] != self.v[vy]) {
+            self.step(2);
+        }
+        self.step(2);
+        log!("sne v{:x}, v{:x}", vx, vy);
+    }
+
     fn se_vx_vy(&mut self, opcode: u16) {
-        let vx = ((opcode & 0x0f00) >> 8) as usize;
-        let vy = ((opcode & 0x00f0) >> 4) as usize;
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let vy = mask(opcode, 0x00f0) >> 4;
         if self.v[vx] == self.v[vy] {
             self.step(2);
         }
         self.step(2);
+        log!("se v{:x}, v{:x}", vx, vy);
     }
 
     fn sne_vx_kk(&mut self, opcode: u16) {
@@ -195,6 +307,7 @@ impl Cpu {
             self.step(2);
         }
         self.step(2);
+        log!("sne v{:x}, {:02x}", vx, kk);
     }
 
     fn ld(&mut self, opcode: u16) {
@@ -247,21 +360,11 @@ mod tests {
     }
 
     #[test]
-    fn sys() {
-        let mut cpu = Cpu::new();
-        cpu.sys(0x0000);
-        assert_eq!(cpu.pc, 2);
-        assert_eq!(cpu.sp, 0);
-        assert_eq!(cpu.halted, false);
-        assert_eq!(cpu.v, [0; 16]);
-        assert_eq!(cpu.i, 0);
-    }
-
-    #[test]
     fn cls() {
         let mut cpu = Cpu::new();
         cpu.cls(0x0123);
         assert_eq!(cpu.pc, 2);
+        assert!(false);
     }
 
     #[test]
@@ -270,6 +373,17 @@ mod tests {
         cpu.ret(0x0000);
         assert_eq!(cpu.pc, 2);
         assert!(false);
+    }
+
+    #[test]
+    fn sys() {
+        let mut cpu = Cpu::new();
+        cpu.sys(0x0000);
+        assert_eq!(cpu.pc, 2);
+        assert_eq!(cpu.sp, 0);
+        assert_eq!(cpu.halted, false);
+        assert_eq!(cpu.v, [0; 16]);
+        assert_eq!(cpu.i, 0);
     }
 
     #[test]
@@ -328,34 +442,66 @@ mod tests {
     #[test]
     fn ld_vx_kk() {
         let mut cpu = Cpu::new();
-        cpu.ld_vx_kk(0x01fe);
+        cpu.reset();
+        cpu.ld_vx_kk(0x001f);
         assert_eq!(cpu.pc, 2);
-        assert_eq!(cpu.v[1], 0xfe);
+        assert_eq!(cpu.v[0], 0x1f);
     }
 
     #[test]
     fn add_vx_kk() {
-        assert!(false);
+        let mut cpu = Cpu::new();
+        cpu.reset();
+        cpu.v[0] = 0x1f;
+        cpu.add_vx_kk(0x7020);
+        assert_eq!(cpu.pc, 2);
+        assert_eq!(cpu.v[0], 0x3f);
+        cpu.reset();
+        cpu.v[0x0] = 0xff;
+        cpu.add_vx_kk(0x7002);
+        assert_eq!(cpu.v[0x0], 1);
+        assert_eq!(cpu.pc, 2);
     }
 
     #[test]
     fn ld_vx_vy() {
-        assert!(false);
+        let mut cpu = Cpu::new();
+        cpu.v[0] = 10;
+        cpu.v[1] = 20;
+        cpu.ld_vx_vy(0x8010);
+        assert_eq!(cpu.v[0], 20);
+        assert_eq!(cpu.v[1], 20);
+        assert_eq!(cpu.pc, 2);
     }
 
     #[test]
     fn or() {
-        assert!(false);
+        let mut cpu = Cpu::new();
+        cpu.v[0] = 0x1f;
+        cpu.v[1] = 0xf1;
+        cpu.or(0x8011);
+        assert_eq!(cpu.pc, 2);
+        assert_eq!(cpu.v[0], 0xff);
     }
 
     #[test]
     fn and() {
-        assert!(false);
+        let mut cpu = Cpu::new();
+        cpu.v[0] = 0x1f;
+        cpu.v[1] = 0x1f;
+        cpu.and(0x8012);
+        assert_eq!(cpu.v[0], 0x1f);
+        assert_eq!(cpu.pc, 2);
     }
 
     #[test]
     fn xor() {
-        assert!(false);
+        let mut cpu = Cpu::new();
+        cpu.v[0] = 0x1f;
+        cpu.v[1] = 0x20;
+        cpu.xor(0x8013);
+        assert_eq!(cpu.v[0], 0x3f);
+        assert_eq!(cpu.pc, 2);
     }
 
      #[test]
@@ -364,36 +510,75 @@ mod tests {
         cpu.v[0x0] = 250;
         cpu.v[0x1] = 10;
         cpu.add_vx_vy(0x8014);
-        assert_eq!(cpu.pc, 2);
         assert_eq!(cpu.v[0xf], 1);
         assert_eq!(cpu.v[0x0], 4);
+        assert_eq!(cpu.pc, 2);
         cpu.reset();
         cpu.v[0x0] = 100;
         cpu.v[0x1] = 28;
         cpu.add_vx_vy(0x8014);
-        assert_eq!(cpu.pc, 2);
         assert_eq!(cpu.v[0xf], 0);
         assert_eq!(cpu.v[0x0], 128);
+        assert_eq!(cpu.pc, 2);
     }
 
     #[test]
     fn sub_vx_vy() {
-        assert!(false);
+        let mut cpu = Cpu::new();
+        cpu.v[0x0] = 100;
+        cpu.v[0x1] = 20;
+        cpu.sub_vx_vy(0x8015);
+        assert_eq!(cpu.v[0x0], 80);
+        assert_eq!(cpu.pc, 2);
     }
 
     #[test]
     fn shr() {
-        assert!(false);
+        let mut cpu = Cpu::new();
+        cpu.v[0x2] = 8;
+        cpu.shr(0x8206);
+        assert_eq!(cpu.v[0xf], 0);
+        assert_eq!(cpu.v[0x2], 4);
+        assert_eq!(cpu.pc, 2);
+        cpu.reset();
+        cpu.v[0x2] = 7;
+        cpu.shr(0x8206);
+        assert_eq!(cpu.v[0xf], 1);
+        assert_eq!(cpu.v[0x2], 3);
+        assert_eq!(cpu.pc, 2);
     }
 
     #[test]
     fn subn() {
-        assert!(false);
+        let mut cpu = Cpu::new();
+        cpu.v[0x0] = 10;
+        cpu.v[0x1] = 20;
+        cpu.subn(0x8017);
+        assert_eq!(cpu.v[0xf], 1);
+        assert_eq!(cpu.v[0x0], 10);
+        assert_eq!(cpu.pc, 2);
+        cpu.reset();
+        cpu.v[0x0] = 10;
+        cpu.v[0x1] = 5;
+        cpu.subn(0x8017);
+        assert_eq!(cpu.v[0xf], 0);
+        assert_eq!(cpu.v[0x0], 251);
+        assert_eq!(cpu.pc, 2);
     }
 
     #[test]
     fn shl() {
-        assert!(false);
+        let mut cpu = Cpu::new();
+        cpu.v[0x2] = 8;
+        cpu.shl(0x820e);
+        assert_eq!(cpu.v[0xf], 0);
+        assert_eq!(cpu.v[0x2], 16);
+        assert_eq!(cpu.pc, 2);
+        cpu.reset();
+        cpu.v[0x2] = 0x80;
+        cpu.shl(0x820e);
+        assert_eq!(cpu.v[0xf], 1);
+        assert_eq!(cpu.pc, 2);
     }
     
     #[test]
