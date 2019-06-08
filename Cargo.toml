@@ -1,0 +1,15 @@
+[package]
+name = "chip8"
+version = "0.1.0"
+authors = ["Chris Hutchinson <cshutchinson@fzcorp.com>"]
+edition = "2018"
+
+[features]
+default = ["dx12"]
+dx11 = ["wgpu/dx11"]
+dx12 = ["wgpu/dx12"]
+vulkan = ["wgpu/vulkan"]
+
+[dependencies]
+winit = "0.18.1"
+wgpu = "0.2.3"
