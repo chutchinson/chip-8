@@ -1,5 +1,10 @@
 use std::io::Write;
 
+#[inline]
+fn mask(opcode: u16, mask: u16) -> usize {
+    (opcode & mask) as usize
+}
+
 pub struct Cpu {
     halted: bool,
     memory: [u8; 4096],
@@ -83,6 +88,8 @@ impl Cpu {
             0x0000 => Cpu::sys,
             0x1000 => Cpu::jp,
             0x2000 => Cpu::call,
+            0x3000 => Cpu::se_vx_kk,
+            0x4000 => Cpu::sne_vx_kk,
             0x6000 => Cpu::ld_vx_kk,
             0xa000 => Cpu::ld,
             0xd000 => Cpu::drw,
@@ -90,6 +97,7 @@ impl Cpu {
             _ => op
         };
         let op = match opcode & 0xf00f {
+            0x5000 => Cpu::se_vx_vy,
             0x8000 => Cpu::nop,
             0x8001 => Cpu::nop,
             0x8002 => Cpu::nop,
@@ -102,7 +110,7 @@ impl Cpu {
             _ => op
         };
         let op = match opcode & 0xf0ff {
-            0xf01e => Cpu::add_i_v,
+            0xf01e => Cpu::add_i_vx,
             _ => op
         };
         op
@@ -117,7 +125,7 @@ impl Cpu {
         self.halt();
     }
 
-    fn add_i_v(&mut self, opcode: u16) {
+    fn add_i_vx(&mut self, opcode: u16) {
         let vx = (opcode & 0x0f00) >> 8;
         let v = self.v[vx as usize];
         self.i = self.i.saturating_add(v as u16);
@@ -126,10 +134,13 @@ impl Cpu {
     }
 
     fn add_vx_vy(&mut self, opcode: u16) {
-        let x = (opcode & 0x0f00) >> 8;
-        let y = (opcode & 0x0f00) >> 4;
+        let vx = mask(opcode, 0x0f00) >> 8;
+        let vy = mask(opcode, 0x00f0) >> 4;
+        let sum = (self.v[vx] as usize) + (self.v[vy] as usize);
+        self.v[0xf] = if sum > 0xff { 1 } else { 0 };
+        self.v[vx] = sum as u8;
         self.step(2);
-        log!("add v{:x}, v{:x}", x, y);
+        log!("add v{:x}, v{:x}", vx, vy);
     }
     
     fn nop(&mut self, opcode: u16) {
@@ -157,6 +168,33 @@ impl Cpu {
         let addr = opcode & 0x0fff;
         self.pc = addr;
         log!("jp {:#03x}", addr);
+    }
+
+    fn se_vx_kk(&mut self, opcode: u16) {
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+        let kk = (opcode & 0x00ff) as u8;
+        if self.v[vx] == kk {
+            self.step(2);
+        }
+        self.step(2);
+    }
+
+    fn se_vx_vy(&mut self, opcode: u16) {
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+        let vy = ((opcode & 0x00f0) >> 4) as usize;
+        if self.v[vx] == self.v[vy] {
+            self.step(2);
+        }
+        self.step(2);
+    }
+
+    fn sne_vx_kk(&mut self, opcode: u16) {
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+        let kk = (opcode & 0x00ff) as u8;
+        if self.v[vx] != kk {
+            self.step(2);
+        }
+        self.step(2);
     }
 
     fn ld(&mut self, opcode: u16) {
@@ -220,19 +258,18 @@ mod tests {
     }
 
     #[test]
-    fn ld_kx_kk() {
+    fn cls() {
         let mut cpu = Cpu::new();
-        cpu.ld_vx_kk(0x01fe);
+        cpu.cls(0x0123);
         assert_eq!(cpu.pc, 2);
-        assert_eq!(cpu.v[1], 0xfe);
     }
 
     #[test]
-    fn ld() {
+    fn ret() {
         let mut cpu = Cpu::new();
-        cpu.ld(0xf777);
+        cpu.ret(0x0000);
         assert_eq!(cpu.pc, 2);
-        assert_eq!(cpu.i, 0x0777);
+        assert!(false);
     }
 
     #[test]
@@ -251,41 +288,217 @@ mod tests {
     }
 
     #[test]
-    fn cls() {
+    fn se_vx_kk() {
         let mut cpu = Cpu::new();
-        cpu.cls(0x0123);
+        cpu.v[0x1] = 0x12;
+        cpu.se_vx_kk(0x3112);
+        assert_eq!(cpu.pc, 4);
+        cpu.reset();
+        cpu.v[0x1] = 0x12;
+        cpu.se_vx_kk(0x0100);
         assert_eq!(cpu.pc, 2);
     }
 
     #[test]
-    fn add_vx_vy() {
+    fn sne_vx_kk() {
         let mut cpu = Cpu::new();
-        cpu.v[0] = 10;
-        cpu.v[1] = 20;
-        cpu.add_vx_vy(0x0001);
+        cpu.v[0x1] = 0x12;
+        cpu.sne_vx_kk(0x0113);
+        assert_eq!(cpu.pc, 4);
+        cpu.reset();
+        cpu.v[0x1] = 0x13;
+        cpu.sne_vx_kk(0x0113);
         assert_eq!(cpu.pc, 2);
+    }
+    
+    #[test]
+    fn se_vx_vy() {
+        let mut cpu = Cpu::new();
+        cpu.v[0x0] = 0x12;
+        cpu.v[0x1] = 0x12;
+        cpu.se_vx_vy(0x5010);
+        assert_eq!(cpu.pc, 4);
+        cpu.reset();
+        cpu.v[0x0] = 0x01;
+        cpu.v[0x1] = 0x02;
+        cpu.se_vx_vy(0x5010);
+        assert_eq!(cpu.pc, 2);
+    }
+
+    #[test]
+    fn ld_vx_kk() {
+        let mut cpu = Cpu::new();
+        cpu.ld_vx_kk(0x01fe);
+        assert_eq!(cpu.pc, 2);
+        assert_eq!(cpu.v[1], 0xfe);
+    }
+
+    #[test]
+    fn add_vx_kk() {
         assert!(false);
     }
 
     #[test]
-    fn add_i_v() {
+    fn ld_vx_vy() {
+        assert!(false);
+    }
+
+    #[test]
+    fn or() {
+        assert!(false);
+    }
+
+    #[test]
+    fn and() {
+        assert!(false);
+    }
+
+    #[test]
+    fn xor() {
+        assert!(false);
+    }
+
+     #[test]
+    fn add_vx_vy() {
+        let mut cpu = Cpu::new();
+        cpu.v[0x0] = 250;
+        cpu.v[0x1] = 10;
+        cpu.add_vx_vy(0x8014);
+        assert_eq!(cpu.pc, 2);
+        assert_eq!(cpu.v[0xf], 1);
+        assert_eq!(cpu.v[0x0], 4);
+        cpu.reset();
+        cpu.v[0x0] = 100;
+        cpu.v[0x1] = 28;
+        cpu.add_vx_vy(0x8014);
+        assert_eq!(cpu.pc, 2);
+        assert_eq!(cpu.v[0xf], 0);
+        assert_eq!(cpu.v[0x0], 128);
+    }
+
+    #[test]
+    fn sub_vx_vy() {
+        assert!(false);
+    }
+
+    #[test]
+    fn shr() {
+        assert!(false);
+    }
+
+    #[test]
+    fn subn() {
+        assert!(false);
+    }
+
+    #[test]
+    fn shl() {
+        assert!(false);
+    }
+    
+    #[test]
+    fn sne_vx_vy() {
+        assert!(false);
+    }
+
+    #[test]
+    fn ld_i_addr() {
+        assert!(false);
+    }
+
+    #[test]
+    fn jp_v0_addr() {
+        assert!(false);
+    }
+
+    #[test]
+    fn rnd() {
+        assert!(false);
+    }
+
+    #[test]
+    fn drw() {
+        let mut cpu = Cpu::new();
+        cpu.drw(0x0000);
+        assert!(false);
+    }
+
+    #[test]
+    fn skp() {
+        assert!(false);
+    }
+
+    #[test]
+    fn sknp() {
+        assert!(false);
+    }
+
+    #[test]
+    fn ld_vx_dt() {
+        assert!(false);
+    }
+
+    #[test]
+    fn ld_vx_k() {
+        assert!(false);
+    }
+
+    #[test]
+    fn ld_dt_vx() {
+        assert!(false);
+    }
+
+    #[test]
+    fn ld_st_vx() {
+        assert!(false);
+    }
+
+    #[test]
+    fn add_i_vx() {
         let mut cpu = Cpu::new();
         cpu.v[0x0f] = 10;
         cpu.i = 1;
-        cpu.add_i_v(0x0f00);
+        cpu.add_i_vx(0x0f00);
         assert_eq!(cpu.pc, 2);
         assert_eq!(cpu.i, 11);
         cpu.i = 0xffff;
         cpu.v[0x0f] = 0xff;
-        cpu.add_i_v(0x0f00);
+        cpu.add_i_vx(0x0f00);
         assert_eq!(cpu.i, 0xffff);
     }
 
     #[test]
-    fn ret() {
-        let mut cpu = Cpu::new();
-        cpu.ret(0x0000);
-        assert_eq!(cpu.pc, 2);
+    fn ld_f_vx() {
+        assert!(false);
+    }
+
+    #[test]
+    fn ld_b_vx() {
+        assert!(false);
+    }
+
+    #[test]
+    fn ld_i_vx() {
+        assert!(false);
+    }
+
+    #[test]
+    fn ld_vx_i() {
+        assert!(false);
+    }
+
+    #[test]
+    fn scd() {
+        assert!(false);
+    }
+
+    #[test]
+    fn scr() {
+        assert!(false);
+    }
+
+    #[test]
+    fn scl() {
         assert!(false);
     }
 
@@ -297,9 +510,32 @@ mod tests {
     }
 
     #[test]
-    fn drw() {
-        let mut cpu = Cpu::new();
-        cpu.drw(0x0000);
+    fn low() {
+        assert!(false);
+    }
+
+    #[test]
+    fn high() {
+        assert!(false);
+    }
+
+    #[test]
+    fn drw_vx_vy() {
+        assert!(false);
+    }
+
+    #[test]
+    fn ld_hf_vx() {
+        assert!(false);
+    }
+
+    #[test]
+    fn ld_r_vx() {
+        assert!(false);
+    }
+
+    #[test]
+    fn ld_vx_r() {
         assert!(false);
     }
 
