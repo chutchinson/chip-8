@@ -99,6 +99,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "chip8"
 version = "0.1.0"
 dependencies = [
+ "rand 0.6.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "wgpu 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "winit 0.18.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

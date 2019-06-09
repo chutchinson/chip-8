@@ -13,3 +13,4 @@ vulkan = ["wgpu/vulkan"]
 [dependencies]
 winit = "0.18.1"
 wgpu = "0.2.3"
+rand = "0.6.5"
