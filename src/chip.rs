@@ -1,8 +1,13 @@
 use std::sync::Arc;
 use winit::{Window, WindowBuilder, Event, WindowEvent, EventsLoop};
+use winit::dpi::{LogicalSize};
 use wgpu::{SwapChain};
 use crate::cpu::Cpu;
 use crate::gpu::Gpu;
+
+const DEFAULT_WIDTH: u32 = 128;
+const DEFAULT_HEIGHT: u32 = 64;
+const SCALE: u32 = 4;
 
 pub struct Chip {
     events: EventsLoop,
@@ -15,9 +20,12 @@ pub struct Chip {
 impl Chip {
 
     pub fn new() -> Self {
+        let width = DEFAULT_WIDTH * SCALE;
+        let height = DEFAULT_HEIGHT * SCALE;
         let events = EventsLoop::new();
         let window = WindowBuilder::new()
             .with_title("chip-8")
+            .with_dimensions(LogicalSize::new(width as f64, height as f64))
             .build(&events)
             .unwrap();
         let instance = wgpu::Instance::new();
@@ -33,8 +41,8 @@ impl Chip {
         let descriptor = wgpu::SwapChainDescriptor {
             usage: wgpu::TextureUsageFlags::OUTPUT_ATTACHMENT,
             format: wgpu::TextureFormat::Bgra8Unorm,
-            width: 800 as u32,
-            height: 600 as u32
+            width: width,
+            height: height
         };
         let mut swapchain = device.create_swap_chain(&surface, &descriptor);
         Chip {

@@ -148,6 +148,7 @@ impl Cpu {
 
     fn exit(&mut self, _opcode: u16) {
         self.halt();
+        log!("exit");
     }
 
     fn add_vx_kk(&mut self, opcode: u16) {
@@ -200,6 +201,7 @@ impl Cpu {
             self.step(2);
         }
         self.step(2);
+        log!("se v{:x}, {:02x}", vx, kk);
     }
 
     fn ld_vx_vy(&mut self, opcode: u16) {
