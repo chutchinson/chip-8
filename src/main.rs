@@ -1,18 +1,16 @@
 #[macro_use] mod log;
 mod cpu;
 mod gpu;
+mod timer;
 mod chip;
 
 use chip::Chip;
 
-use std::fs;
-use cpu::Cpu;
-use winit::{EventsLoop, Window, WindowBuilder, Event, WindowEvent, ControlFlow};
-use winit::dpi::{LogicalSize};
-
 fn main() {
+    let rom = std::fs::read("F://rom.ch8").unwrap();
     let mut chip = Chip::new();
-    
+
     chip.reset();
+    chip.load(&rom[0..]);
     chip.run();
 }

@@ -1,10 +1,13 @@
 use std::sync::Arc;
+use std::rc::Rc;
 use winit::{Window, WindowBuilder, Event, WindowEvent, EventsLoop};
 use winit::dpi::{LogicalSize};
 use wgpu::{SwapChain};
-use crate::cpu::Cpu;
+use crate::cpu::{Bus, Cpu};
 use crate::gpu::Gpu;
+use crate::timer::Timer;
 
+const DEFAULT_CLOCK_RATE: u32 = 166666667;
 const DEFAULT_WIDTH: u32 = 128;
 const DEFAULT_HEIGHT: u32 = 64;
 const SCALE: u32 = 4;
@@ -13,6 +16,7 @@ pub struct Chip {
     events: EventsLoop,
     window: Window,
     swapchain: SwapChain,
+    bus: Bus,
     cpu: Cpu,
     gpu: Gpu
 }
@@ -49,9 +53,18 @@ impl Chip {
             events: events,
             window: window,
             swapchain: swapchain,
+            bus: Bus {
+                sound_timer: Timer::new(DEFAULT_CLOCK_RATE),
+                delay_timer: Timer::new(DEFAULT_CLOCK_RATE)
+            },
             cpu: Cpu::new(),
             gpu: Gpu::new(device)
         }
+    }
+
+    pub fn load(&mut self, rom: &[u8]) {
+        self.reset();
+        self.cpu.load(rom);
     }
 
     pub fn reset(&mut self) {
@@ -80,7 +93,9 @@ impl Chip {
     }
 
     fn cycle(&mut self) {
-        self.cpu.cycle();
+        self.bus.sound_timer.tick();
+        self.bus.delay_timer.tick();
+        self.cpu.cycle(&mut self.bus);
         let frame = self.swapchain.get_next_texture();
         self.gpu.render(&frame);
     }

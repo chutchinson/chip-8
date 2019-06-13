@@ -22,8 +22,7 @@ impl Gpu {
     }
 
     pub fn render(&mut self, frame: &SwapChainOutput) {
-        
-        println!("[gpu] render");
+        // println!("[gpu] render");
     }
 
 }

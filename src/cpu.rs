@@ -1,5 +1,8 @@
 use std::io::Write;
+use std::time::{Instant, Duration};
+use std::rc::Rc;
 use rand::Rng;
+use crate::timer::Timer;
 
 #[inline]
 fn mask(opcode: u16, mask: u16) -> usize {
@@ -19,6 +22,11 @@ fn lsb(n: u8) -> u8 {
 #[inline]
 fn msb(n: u8) -> u8 {
     n & 0x80
+}
+
+pub struct Bus {
+    pub sound_timer: Timer,
+    pub delay_timer: Timer
 }
 
 pub struct Cpu {
@@ -50,7 +58,7 @@ impl Cpu {
     }
 
     pub fn load(&mut self, code: &[u8]) {
-        let mut mem = &mut self.memory[0..];
+        let mut mem = &mut self.memory[0x200..];
         match mem.write(&code) {
             Ok(n) => { log!("loaded {} bytes", n) },
             _ => ()
@@ -67,9 +75,15 @@ impl Cpu {
         self.st = 0;
     }
 
-    pub fn cycle(&mut self) {
+    pub fn cycle(&mut self, bus: &mut Bus) {
         if self.halted {
             return
+        }
+        if self.st > 0 && bus.sound_timer.active() {
+            self.st = self.st.saturating_sub(1);
+        }
+        if self.dt > 0 && bus.delay_timer.active() {
+            self.dt = self.dt.saturating_sub(1);
         }
         let opcode = self.fetch();
         let op = self.decode(opcode);
@@ -97,17 +111,17 @@ impl Cpu {
     }
 
     fn decode(&self, opcode: u16) -> fn(&mut Cpu, u16) {
-        log!("[decode] {:04x}", opcode);
+        // log!("[decode] {:04x}", opcode);
         let op = match opcode {
+            0x0000 => Cpu::sys,
             0x00e0 => Cpu::cls,
             0x00ee => Cpu::ret,
             0x00fd => Cpu::exit,
-            0x00fe => Cpu::nop,
-            0x00ff => Cpu::nop,
+            0x00fe => unimplemented!(),
+            0x00ff => unimplemented!(),
             _ => Cpu::nop
         };
         let op = match opcode & 0xf000 {
-            0x0000 => Cpu::sys,
             0x1000 => Cpu::jp,
             0x2000 => Cpu::call,
             0x3000 => Cpu::se_vx_kk,
@@ -116,7 +130,7 @@ impl Cpu {
             0x7000 => Cpu::add_vx_kk,
             0xa000 => Cpu::ld,
             0xf000 => Cpu::ld_vx_i,
-            0xa000 => Cpu::nop,
+            0xa000 => unimplemented!(),
             0xb000 => Cpu::jp_v0_addr,
             0xc000 => Cpu::rnd,
             0xd000 => Cpu::drw,
@@ -157,7 +171,6 @@ impl Cpu {
     fn ret(&mut self, _opcode: u16) {
         self.pc = self.stack[self.sp as usize];
         self.sp = self.sp.saturating_sub(1);
-        self.step(2);
         log!("ret");
     }
 
@@ -173,7 +186,6 @@ impl Cpu {
 
     fn sys(&mut self, opcode: u16) {
         self.step(2);
-        //std::process::exit(-1);
         log!("sys");
     }
 
@@ -422,9 +434,9 @@ impl Cpu {
         let vx = mask(opcode, 0x0f00) >> 8;
         let loc = addr(self.i);
         let v = self.v[vx];
-        self.memory[loc] = v % 10;
+        self.memory[loc + 2] = v % 10;
         self.memory[loc + 1] = (v / 10) % 10;
-        self.memory[loc + 2] = (v / 100) % 10;
+        self.memory[loc + 0] = (v / 100) % 10;
         self.step(2);
         log!("ld b, v{:x}", vx);
     }
@@ -475,9 +487,14 @@ mod tests {
     #[test]
     fn ret() {
         let mut cpu = Cpu::new();
-        cpu.ret(0x0000);
+        cpu.ret(0x00ee);
         assert_eq!(cpu.pc, 2);
-        assert!(false);
+        cpu.reset();
+        cpu.nop(0x0000);        // pc = 2
+        cpu.call(0x2009);       // pc = 9, sp = 1, stack = 2
+        cpu.ret(0x00ee);        // pc = 2, sp = 0
+        assert_eq!(cpu.pc, 2);
+        assert_eq!(cpu.sp, 0);
     }
 
     #[test]
@@ -501,9 +518,11 @@ mod tests {
     #[test]
     fn call() {
         let mut cpu = Cpu::new();
-        cpu.call(0x12);
-        assert_eq!(cpu.pc, 0x12);
-        assert!(false);
+        cpu.nop(0x0000);
+        cpu.call(0x2117);
+        assert_eq!(cpu.sp, 1);
+        assert_eq!(cpu.pc, 0x117);
+        assert_eq!(cpu.stack[1], 2);
     }
 
     #[test]
@@ -793,17 +812,42 @@ mod tests {
 
     #[test]
     fn ld_b_vx() {
-        assert!(false);
+        let mut cpu = Cpu::new();
+        cpu.i = 0x10;
+        cpu.v[1] = 123;
+        cpu.ld_b_vx(0xf133);
+        assert_eq!(cpu.pc, 2);
+        assert_eq!(cpu.memory[0x10 + 0], 1);
+        assert_eq!(cpu.memory[0x10 + 1], 2);
+        assert_eq!(cpu.memory[0x10 + 2], 3);
     }
 
     #[test]
     fn ld_i_vx() {
-        assert!(false);
+        let mut cpu = Cpu::new();
+        cpu.i = 0x10;
+        for i in 0x0..0xf {
+            cpu.v[i] = (i * 2) as u8;
+        }
+        cpu.ld_i_vx(0xff55);
+        assert_eq!(cpu.pc, 2);
+        for i in 0x0..0xf {
+            assert_eq!(cpu.memory[0x10 + i], (i * 2) as u8);
+        }
     }
 
     #[test]
     fn ld_vx_i() {
-        assert!(false);
+        let mut cpu = Cpu::new();
+        cpu.i = 0x10;
+        for i in 0x0..0xf {
+            cpu.memory[cpu.i as usize + i] = (i * 2) as u8;
+        }
+        cpu.ld_vx_i(0xff65);
+        assert_eq!(cpu.pc, 2);
+        for i in 0x0..0xf {
+            assert_eq!(cpu.v[i], (i * 2) as u8);
+        }
     }
 
     #[test]
