@@ -3,6 +3,7 @@ mod cpu;
 mod gpu;
 mod timer;
 mod chip;
+mod keypad;
 
 use chip::Chip;
 

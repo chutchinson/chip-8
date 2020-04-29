@@ -1,6 +1,7 @@
 use crate::cpu::{Cpu, CpuContext};
 use crate::gpu::Gpu;
 use crate::timer::Timer;
+use crate::keypad::Keypad;
 
 use coffee::{Game, Result};
 use coffee::load::{Task};
@@ -16,6 +17,7 @@ pub struct Chip {
     delay_timer: Timer,
     gpu: Gpu,
     cpu: Cpu,
+    keypad: Keypad
 }
 
 impl Game for Chip {
@@ -53,7 +55,8 @@ impl Chip {
             sound_timer: Timer::new(DEFAULT_CLOCK_RATE),
             delay_timer: Timer::new(DEFAULT_CLOCK_RATE),
             cpu: Cpu::new(),
-            gpu: Gpu::new()
+            gpu: Gpu::new(),
+            keypad: Keypad::new()
         }
     }
 

@@ -9,3 +9,4 @@ winit = "0.22.1"
 coffee = { version = "0.4", features = ["opengl"] }
 rodio = "0.11.0"
 rand = "0.7.3"
+bv = "0.11.1"
