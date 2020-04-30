@@ -43,9 +43,17 @@ fn msb(n: u8) -> u8 {
 }
 
 pub struct CpuContext<'a> {
+    pub opcode: u16,
     pub gpu: &'a mut Gpu,
     pub sound_timer: &'a mut Timer,
     pub delay_timer: &'a mut Timer
+}
+
+impl<'a> CpuContext<'a> {
+    pub fn op(&mut self, opcode: u16) -> &mut Self {
+        self.opcode = opcode;
+        self
+    }
 }
 
 pub struct Cpu {
@@ -111,12 +119,23 @@ impl Cpu {
         }
         let opcode = self.fetch();
         let op = self.decode(opcode);
-        op(self, opcode, ctx);
+        ctx.opcode = opcode;
+        op(self, ctx);
     }
 
     pub fn halt(&mut self) {
         self.halted = true;
         log!("[cpu] halt");
+    }
+
+    pub fn dump(&self) {
+        for r in 0..0x10 {
+            print!("v{:x} = #{:02x} ", r, self.v[r]);
+        }
+        println!();
+        println!("i = #{:02x}", self.i);
+        println!("pc = #{:02x}", self.pc);
+        println!("sp = #{:02x}", self.sp);
     }
 
     fn step(&mut self, n: u16) {
@@ -134,7 +153,7 @@ impl Cpu {
         opcode as u16
     }
 
-    fn decode(&self, opcode: u16) -> fn(&mut Cpu, u16, &mut CpuContext) {
+    fn decode(&self, opcode: u16) -> fn(&mut Cpu, &mut CpuContext) {
         log!("[decode] {:04x}", opcode);
         let op = match opcode {
             0x0000 => Cpu::sys,
@@ -190,49 +209,50 @@ impl Cpu {
         op
     }
 
-    fn ret(&mut self, _opcode: u16, _ctx: &mut CpuContext) {
+    fn ret(&mut self, _ctx: &mut CpuContext) {
         self.pc = self.stack[self.sp as usize];
-        self.sp = self.sp.saturating_sub(1);
+        self.sp -= 1;
         log!("ret");
     }
 
-    fn exit(&mut self, _opcode: u16, _ctx: &mut CpuContext) {
+    fn exit(&mut self, _ctx: &mut CpuContext) {
         self.halt();
         log!("exit");
     }
 
-    fn nop(&mut self, opcode: u16, _ctx: &mut CpuContext) {
+    fn nop(&mut self, _ctx: &mut CpuContext) {
         self.step(2);
         log!("nop");
     }
 
-    fn sys(&mut self, opcode: u16, _ctx: &mut CpuContext) {
+    fn sys(&mut self, _ctx: &mut CpuContext) {
         self.step(2);
         log!("sys");
     }
 
-    fn cls(&mut self, opcode: u16, _ctx: &mut CpuContext) {
+    fn cls(&mut self, ctx: &mut CpuContext) {
+        ctx.gpu.clear();
         self.step(2);
         log!("cls");
     }
 
-    fn call(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let addr = addr(opcode);
-        self.sp = self.sp + 1;
+    fn call(&mut self, ctx: &mut CpuContext) {
+        let addr = addr(ctx.opcode);
+        self.sp += 1;
         self.stack[self.sp as usize] = self.pc;
         self.pc = addr as u16;
         log!("call {:#03x}", addr);
     }
 
-    fn jp(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let addr = opcode & 0x0fff;
+    fn jp(&mut self, ctx: &mut CpuContext) {
+        let addr = ctx.opcode & 0x0fff;
         self.pc = addr;
         log!("jp {:#03x}", addr);
     }
 
-    fn se_vx_kk(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let kk = mask(opcode, 0x00ff) as u8;
+    fn se_vx_kk(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let kk = mask(ctx.opcode, 0x00ff) as u8;
         if self.v[vx] == kk {
             self.step(2);
         }
@@ -240,57 +260,57 @@ impl Cpu {
         log!("se v{:x}, {:02x}", vx, kk);
     }
 
-    fn ld_vx_kk(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let x = (opcode & 0x0f00) >> 8;
-        let kk = opcode & 0xff;
+    fn ld_vx_kk(&mut self, ctx: &mut CpuContext) {
+        let x = (ctx.opcode & 0x0f00) >> 8;
+        let kk = ctx.opcode & 0xff;
         self.v[x as usize] = kk as u8;
         self.step(2);
         log!("ld v{:x}, {:#02x}", x, kk);
     }
 
-    fn add_vx_kk(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let kk = mask(opcode, 0x00ff) as u8;
+    fn add_vx_kk(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let kk = mask(ctx.opcode, 0x00ff) as u8;
         self.v[vx] = self.v[vx].wrapping_add(kk);
         self.step(2);
         log!("add v{:x}, {:02x}", vx, kk);
     }
 
-    fn ld_vx_vy(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let vy = mask(opcode, 0x00f0) >> 4;
+    fn ld_vx_vy(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vy = mask(ctx.opcode, 0x00f0) >> 4;
         self.v[vx] = self.v[vy];
         self.step(2);
         log!("ld v{:x}, v{:x}", vx, vy);
     }
 
-    fn or(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let vy = mask(opcode, 0x00f0) >> 4;
+    fn or(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vy = mask(ctx.opcode, 0x00f0) >> 4;
         self.v[vx] = self.v[vx] | self.v[vy];
         self.step(2);
         log!("or v{:x}, v{:x}", vx, vy);
     }
 
-    fn and(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let vy = mask(opcode, 0x00f0) >> 4;
+    fn and(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vy = mask(ctx.opcode, 0x00f0) >> 4;
         self.v[vx] = self.v[vx] & self.v[vy];
         self.step(2);
         log!("and v{:x}, v{:x}", vx, vy);
     }
 
-    fn xor(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let vy = mask(opcode, 0x00f0) >> 4;
+    fn xor(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vy = mask(ctx.opcode, 0x00f0) >> 4;
         self.v[vx] = self.v[vx] ^ self.v[vy];
         self.step(2);
         log!("xor v{:x}, v{:x}", vx, vy);
     }
 
-    fn add_vx_vy(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let vy = mask(opcode, 0x00f0) >> 4;
+    fn add_vx_vy(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vy = mask(ctx.opcode, 0x00f0) >> 4;
         let sum = (self.v[vx] as usize) + (self.v[vy] as usize);
         self.v[0xf] = if sum > 0xff { 1 } else { 0 };
         self.v[vx] = sum as u8;
@@ -298,55 +318,55 @@ impl Cpu {
         log!("add v{:x}, v{:x}", vx, vy);
     }
 
-    fn sub_vx_vy(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let vy = mask(opcode, 0x00f0) >> 4;
+    fn sub_vx_vy(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vy = mask(ctx.opcode, 0x00f0) >> 4;
         self.v[0xf] = if self.v[vx] > self.v[vy] { 1 } else { 0 };
         self.v[vx] = self.v[vx].wrapping_sub(self.v[vy]);
         self.step(2);
         log!("sub v{:x}, v{:x}", vx, vy);
     }
 
-    fn shr(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let vy = mask(opcode, 0x00f0) >> 4;
+    fn shr(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vy = mask(ctx.opcode, 0x00f0) >> 4;
         self.v[0xf] = if lsb(self.v[vx]) == 0x001 { 1 } else { 0 };
         self.v[vx] = self.v[vx].wrapping_shr(1);
         self.step(2);
         log!("shr v{:x}", vx);
     }
 
-    fn subn(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let vy = mask(opcode, 0x00f0) >> 4;
+    fn subn(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vy = mask(ctx.opcode, 0x00f0) >> 4;
         self.v[0xf] = if self.v[vy] > self.v[vx] { 1 } else { 0 };
         self.v[vx] = self.v[vy].wrapping_sub(self.v[vx]);
         self.step(2);
         log!("subn v{:x}, v{:x}", vx, vy);
     }
 
-    fn shl(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let vy = mask(opcode, 0x00f0) >> 4;
+    fn shl(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vy = mask(ctx.opcode, 0x00f0) >> 4;
         self.v[0xf] = if msb(self.v[vx]) == 0x80 { 1 } else { 0 };
         self.v[vx] = self.v[vx].wrapping_shl(1);
         self.step(2);
         log!("shl v{:x}", vx);
     }
 
-    fn sne_vx_vy(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let vy = mask(opcode, 0x00f0) >> 4;
-        if (self.v[vx] != self.v[vy]) {
+    fn sne_vx_vy(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vy = mask(ctx.opcode, 0x00f0) >> 4;
+        if self.v[vx] != self.v[vy] {
             self.step(2);
         }
         self.step(2);
         log!("sne v{:x}, v{:x}", vx, vy);
     }
 
-    fn se_vx_vy(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let vy = mask(opcode, 0x00f0) >> 4;
+    fn se_vx_vy(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vy = mask(ctx.opcode, 0x00f0) >> 4;
         if self.v[vx] == self.v[vy] {
             self.step(2);
         }
@@ -354,9 +374,9 @@ impl Cpu {
         log!("se v{:x}, v{:x}", vx, vy);
     }
 
-    fn sne_vx_kk(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = ((opcode & 0x0f00) >> 8) as usize;
-        let kk = (opcode & 0x00ff) as u8;
+    fn sne_vx_kk(&mut self, ctx: &mut CpuContext) {
+        let vx = ((ctx.opcode & 0x0f00) >> 8) as usize;
+        let kk = (ctx.opcode & 0x00ff) as u8;
         if self.v[vx] != kk {
             self.step(2);
         }
@@ -364,22 +384,22 @@ impl Cpu {
         log!("sne v{:x}, {:02x}", vx, kk);
     }
 
-    fn ld(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let addr = opcode & 0x0fff;
+    fn ld(&mut self, ctx: &mut CpuContext) {
+        let addr = ctx.opcode & 0x0fff;
         self.i = addr;
         self.step(2);
         log!("ld i, {:#03x}", addr);
     }
 
-    fn jp_v0_addr(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let addr = mask(opcode, 0x0fff);
-        self.pc = addr.wrapping_add(self.v[0] as usize) as u16;
+    fn jp_v0_addr(&mut self, ctx: &mut CpuContext) {
+        let addr = ctx.opcode & 0x0fff;
+        self.pc = addr.wrapping_add(self.v[0] as u16);
         log!("jp v0, {:03x}", addr);
     }
 
-    fn rnd(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
-        let kk = mask(opcode, 0x00ff) as u8;
+    fn rnd(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let kk = mask(ctx.opcode, 0x00ff) as u8;
         let mut rng = rand::thread_rng();
         let rnd: u8 = rng.gen();
         self.v[vx] = rnd & kk;
@@ -387,74 +407,76 @@ impl Cpu {
         log!("rnd v{:x}, {:02x}", vx, kk);
     }
 
-    fn drw(&mut self, opcode: u16, ctx: &mut CpuContext) {
-        let x = (opcode & 0x0f00) >> 8;
-        let y = (opcode & 0x00f0) >> 4;
-        let n = opcode & 0x000f;
+    fn drw(&mut self, ctx: &mut CpuContext) {
+        let x = (ctx.opcode & 0x0f00) >> 8;
+        let y = (ctx.opcode & 0x00f0) >> 4;
+        let n = ctx.opcode & 0x000f;
+        let dx = self.v[x as usize] as u16;
+        let dy = self.v[y as usize] as u16;
+        self.v[0x0f] = if ctx.gpu.draw_sprite(&self.memory, self.i, n, dx, dy) { 1 } else { 0 };
         self.step(2);
-        ctx.gpu.draw_sprite(self.i, n, x, y);
         log!("drw {:x}, {:x}, {:#02x}", x, y, n);
     }
 
-    fn skp(&mut self, opcode: u16, _ctx: &mut CpuContext) {
+    fn skp(&mut self, ctx: &mut CpuContext) {
         unimplemented!();
-        let vx = mask(opcode, 0x0f00) >> 8;
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
         self.step(2);
         log!("skp v{:x}", vx);
     }
 
-    fn sknp(&mut self, opcode: u16, _ctx: &mut CpuContext) {
+    fn sknp(&mut self, ctx: &mut CpuContext) {
         unimplemented!();
-        let vx = mask(opcode, 0x0f00) >> 8;
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
         self.step(2);
         log!("sknp v{:x}", vx);
     }
 
-    fn ld_vx_dt(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
+    fn ld_vx_dt(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
         self.v[vx] = self.dt;
         self.step(2);
         log!("ld v{:x}, dt", vx);
     }
 
-    fn ld_vx_k(&mut self, opcode: u16, _ctx: &mut CpuContext) {
+    fn ld_vx_k(&mut self, ctx: &mut CpuContext) {
         unimplemented!();
-        let vx = mask(opcode, 0x0f00) >> 8;
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
         self.step(2);
         log!("ld v{:x}, k", vx);
     }
 
-    fn ld_dt_vx(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
+    fn ld_dt_vx(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
         self.dt = self.v[vx];
         self.step(2);
         log!("ld dt, v{:x}", vx);
     }
 
-    fn ld_st_vx(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
+    fn ld_st_vx(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
         self.st = self.v[vx];
         self.step(2);
         log!("ld st, v{:x}", vx);
     }
 
-    fn add_i_vx(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
+    fn add_i_vx(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
         self.i = self.i.wrapping_add(self.v[vx].into());
         self.step(2);
         log!("ld i, v{:x}", vx);
     }
 
-    fn ld_f_vx(&mut self, opcode: u16, _ctx: &mut CpuContext) {
+    fn ld_f_vx(&mut self, ctx: &mut CpuContext) {
         // TODO: implement
-        let vx = mask(opcode, 0x0f00) >> 8;
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
         self.i = 0;
         self.step(2);
         log!("ld f, v{:x}", vx);
     }
 
-    fn ld_b_vx(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
+    fn ld_b_vx(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
         let loc = addr(self.i);
         let v = self.v[vx];
         self.memory[loc + 2] = v % 10;
@@ -464,8 +486,8 @@ impl Cpu {
         log!("ld b, v{:x}", vx);
     }
 
-    fn ld_i_vx(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
+    fn ld_i_vx(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
         let mut memory = &mut self.memory[addr(self.i)..];
         let v = &self.v[0..vx];
         memory.write(v).unwrap();
@@ -473,8 +495,8 @@ impl Cpu {
         log!("ld i, v{:x}", vx);
     }
 
-    fn ld_vx_i(&mut self, opcode: u16, _ctx: &mut CpuContext) {
-        let vx = mask(opcode, 0x0f00) >> 8;
+    fn ld_vx_i(&mut self, ctx: &mut CpuContext) {
+        let vx = mask(ctx.opcode, 0x0f00) >> 8;
         let memory = &self.memory[addr(self.i)..];
         let mut v = &mut self.v[0..vx];
         v.write(memory).unwrap();
@@ -495,6 +517,7 @@ mod tests {
         let mut gpu = Gpu::new();
         let mut cpu = Cpu::new();
         let mut ctx = CpuContext {
+            opcode: 0x0000,
             sound_timer: &mut sound_timer,
             delay_timer: &mut delay_timer,
             gpu: &mut gpu
@@ -505,7 +528,8 @@ mod tests {
     #[test]
     fn nop() {
         cpu_test(|cpu, ctx| {
-            cpu.nop(0x0000, ctx);
+            ctx.opcode = 0x0000;
+            cpu.nop(ctx);
             assert_eq!(cpu.pc, 2);
             assert_eq!(cpu.sp, 0);
             assert_eq!(cpu.halted, false);
@@ -517,7 +541,8 @@ mod tests {
     #[test]
     fn cls() {
         cpu_test(|cpu, ctx| {
-            cpu.cls(0x0123, ctx);
+            ctx.opcode = 0x0123;
+            cpu.cls(ctx);
             assert_eq!(cpu.pc, 2);
             assert!(false);
         });
@@ -526,12 +551,16 @@ mod tests {
     #[test]
     fn ret() {
         cpu_test(|cpu, ctx| {
-            cpu.ret(0x00ee, ctx);
+            ctx.opcode = 0x00ee;
+            cpu.ret(ctx);
             assert_eq!(cpu.pc, 2);
             cpu.reset();
-            cpu.nop(0x0000, ctx);        // pc = 2
-            cpu.call(0x2009, ctx);       // pc = 9, sp = 1, stack = 2
-            cpu.ret(0x00ee, ctx);        // pc = 2, sp = 0
+            ctx.opcode = 0x0000;
+            cpu.nop(ctx);        // pc = 2
+            ctx.opcode = 0x2009;
+            cpu.call(ctx);       // pc = 9, sp = 1, stack = 2
+            ctx.opcode = 0x00ee;
+            cpu.ret(ctx);        // pc = 2, sp = 0
             assert_eq!(cpu.pc, 2);
             assert_eq!(cpu.sp, 0);
         });
@@ -540,7 +569,8 @@ mod tests {
     #[test]
     fn sys() {
         cpu_test(|cpu, ctx| {
-            cpu.sys(0x0000, ctx);
+            ctx.opcode = 0x0000;
+            cpu.sys(ctx);
             assert_eq!(cpu.pc, 2);
             assert_eq!(cpu.sp, 0);
             assert_eq!(cpu.halted, false);
@@ -552,7 +582,8 @@ mod tests {
     #[test]
     fn jp() {
         cpu_test(|cpu, ctx| {
-            cpu.jp(0x7fff, ctx);
+            ctx.opcode = 0x7fff;
+            cpu.jp(ctx);
             assert_eq!(cpu.pc, 0x0fff);
         });
     }
@@ -560,8 +591,10 @@ mod tests {
     #[test]
     fn call() {
         cpu_test(|cpu, ctx| {
-            cpu.nop(0x0000, ctx);
-            cpu.call(0x2117, ctx);
+            ctx.opcode = 0x0000;
+            cpu.nop(ctx);
+            ctx.opcode = 0x2117;
+            cpu.call(ctx);
             assert_eq!(cpu.sp, 1);
             assert_eq!(cpu.pc, 0x117);
             assert_eq!(cpu.stack[1], 2);
@@ -572,11 +605,13 @@ mod tests {
     fn se_vx_kk() {
         cpu_test(|cpu, ctx| {
             cpu.v[0x1] = 0x12;
-            cpu.se_vx_kk(0x3112, ctx);
+            ctx.opcode = 0x3112;
+            cpu.se_vx_kk(ctx);
             assert_eq!(cpu.pc, 4);
             cpu.reset();
             cpu.v[0x1] = 0x12;
-            cpu.se_vx_kk(0x0100, ctx);
+            ctx.opcode = 0x0100;
+            cpu.se_vx_kk(ctx);
             assert_eq!(cpu.pc, 2);
         });
     }
@@ -585,11 +620,13 @@ mod tests {
     fn sne_vx_kk() {
         cpu_test(|cpu, ctx| {
             cpu.v[0x1] = 0x12;
-            cpu.sne_vx_kk(0x0113, ctx);
+            ctx.opcode = 0x0113;
+            cpu.sne_vx_kk(ctx);
             assert_eq!(cpu.pc, 4);
             cpu.reset();
             cpu.v[0x1] = 0x13;
-            cpu.sne_vx_kk(0x0113, ctx);
+            ctx.opcode = 0x0113;
+            cpu.sne_vx_kk(ctx);
             assert_eq!(cpu.pc, 2);
         });  
     }
@@ -599,12 +636,14 @@ mod tests {
         cpu_test(|cpu, ctx| {
             cpu.v[0x0] = 0x12;
             cpu.v[0x1] = 0x12;
-            cpu.se_vx_vy(0x5010, ctx);
+            ctx.opcode = 0x5010;
+            cpu.se_vx_vy(ctx);
             assert_eq!(cpu.pc, 4);
             cpu.reset();
             cpu.v[0x0] = 0x01;
             cpu.v[0x1] = 0x02;
-            cpu.se_vx_vy(0x5010, ctx);
+            ctx.opcode = 0x5010;
+            cpu.se_vx_vy(ctx);
             assert_eq!(cpu.pc, 2);
         });
     }
@@ -613,7 +652,8 @@ mod tests {
     fn ld_vx_kk() {
         cpu_test(|cpu, ctx| {
             cpu.reset();
-            cpu.ld_vx_kk(0x001f, ctx);
+            ctx.opcode = 0x001f;
+            cpu.ld_vx_kk(ctx);
             assert_eq!(cpu.pc, 2);
             assert_eq!(cpu.v[0], 0x1f);
         });
@@ -624,12 +664,14 @@ mod tests {
         cpu_test(|cpu, ctx| {
             cpu.reset();
             cpu.v[0] = 0x1f;
-            cpu.add_vx_kk(0x7020, ctx);
+            ctx.opcode = 0x7020;
+            cpu.add_vx_kk(ctx);
             assert_eq!(cpu.pc, 2);
             assert_eq!(cpu.v[0], 0x3f);
             cpu.reset();
             cpu.v[0x0] = 0xff;
-            cpu.add_vx_kk(0x7002, ctx);
+            ctx.opcode = 0x7002;
+            cpu.add_vx_kk(ctx);
             assert_eq!(cpu.v[0x0], 1);
             assert_eq!(cpu.pc, 2);
         });
@@ -640,7 +682,8 @@ mod tests {
         cpu_test(|cpu, ctx| {
             cpu.v[0] = 10;
             cpu.v[1] = 20;
-            cpu.ld_vx_vy(0x8010, ctx);
+            ctx.opcode = 0x8010;
+            cpu.ld_vx_vy(ctx);
             assert_eq!(cpu.v[0], 20);
             assert_eq!(cpu.v[1], 20);
             assert_eq!(cpu.pc, 2);
@@ -652,7 +695,8 @@ mod tests {
         cpu_test(|cpu, ctx| {
             cpu.v[0] = 0x1f;
             cpu.v[1] = 0xf1;
-            cpu.or(0x8011, ctx);
+            ctx.opcode = 0x8011;
+            cpu.or(ctx);
             assert_eq!(cpu.pc, 2);
             assert_eq!(cpu.v[0], 0xff);
         });
@@ -663,7 +707,7 @@ mod tests {
         cpu_test(|cpu, ctx| {
             cpu.v[0] = 0x1f;
             cpu.v[1] = 0x1f;
-            cpu.and(0x8012, ctx);
+            cpu.and(ctx.op(0x8012));
             assert_eq!(cpu.v[0], 0x1f);
             assert_eq!(cpu.pc, 2);
         });
@@ -674,7 +718,7 @@ mod tests {
         cpu_test(|cpu, ctx| {
             cpu.v[0] = 0x1f;
             cpu.v[1] = 0x20;
-            cpu.xor(0x8013, ctx);
+            cpu.xor(ctx.op(0x8013));
             assert_eq!(cpu.v[0], 0x3f);
             assert_eq!(cpu.pc, 2);
         });
@@ -685,14 +729,14 @@ mod tests {
         cpu_test(|cpu, ctx| {
             cpu.v[0x0] = 250;
             cpu.v[0x1] = 10;
-            cpu.add_vx_vy(0x8014, ctx);
+            cpu.add_vx_vy(ctx.op(0x8014));
             assert_eq!(cpu.v[0xf], 1);
             assert_eq!(cpu.v[0x0], 4);
             assert_eq!(cpu.pc, 2);
             cpu.reset();
             cpu.v[0x0] = 100;
             cpu.v[0x1] = 28;
-            cpu.add_vx_vy(0x8014, ctx);
+            cpu.add_vx_vy(ctx.op(0x8014));
             assert_eq!(cpu.v[0xf], 0);
             assert_eq!(cpu.v[0x0], 128);
             assert_eq!(cpu.pc, 2);
@@ -704,7 +748,7 @@ mod tests {
         cpu_test(|cpu, ctx| {
             cpu.v[0x0] = 100;
             cpu.v[0x1] = 20;
-            cpu.sub_vx_vy(0x8015, ctx);
+            cpu.sub_vx_vy(ctx.op(0x8015));
             assert_eq!(cpu.v[0x0], 80);
             assert_eq!(cpu.pc, 2);
         });
@@ -714,13 +758,13 @@ mod tests {
     fn shr() {
         cpu_test(|cpu, ctx| {
             cpu.v[0x2] = 8;
-            cpu.shr(0x8206, ctx);
+            cpu.shr(ctx.op(0x8206));
             assert_eq!(cpu.v[0xf], 0);
             assert_eq!(cpu.v[0x2], 4);
             assert_eq!(cpu.pc, 2);
             cpu.reset();
             cpu.v[0x2] = 7;
-            cpu.shr(0x8206, ctx);
+            cpu.shr(ctx.op(0x8206));
             assert_eq!(cpu.v[0xf], 1);
             assert_eq!(cpu.v[0x2], 3);
             assert_eq!(cpu.pc, 2);
@@ -732,14 +776,14 @@ mod tests {
         cpu_test(|cpu, ctx| {
             cpu.v[0x0] = 10;
             cpu.v[0x1] = 20;
-            cpu.subn(0x8017, ctx);
+            cpu.subn(ctx.op(0x8017));
             assert_eq!(cpu.v[0xf], 1);
             assert_eq!(cpu.v[0x0], 10);
             assert_eq!(cpu.pc, 2);
             cpu.reset();
             cpu.v[0x0] = 10;
             cpu.v[0x1] = 5;
-            cpu.subn(0x8017, ctx);
+            cpu.subn(ctx.op(0x8017));
             assert_eq!(cpu.v[0xf], 0);
             assert_eq!(cpu.v[0x0], 251);
             assert_eq!(cpu.pc, 2);
@@ -750,13 +794,13 @@ mod tests {
     fn shl() {
         cpu_test(|cpu, ctx| {
             cpu.v[0x2] = 8;
-            cpu.shl(0x820e, ctx);
+            cpu.shl(ctx.op(0x820e));
             assert_eq!(cpu.v[0xf], 0);
             assert_eq!(cpu.v[0x2], 16);
             assert_eq!(cpu.pc, 2);
             cpu.reset();
             cpu.v[0x2] = 0x80;
-            cpu.shl(0x820e, ctx);
+            cpu.shl(ctx.op(0x820e));
             assert_eq!(cpu.v[0xf], 1);
             assert_eq!(cpu.pc, 2);
         });
@@ -767,12 +811,12 @@ mod tests {
         cpu_test(|cpu, ctx| {
             cpu.v[0x2] = 8;
             cpu.v[0x3] = 7;
-            cpu.sne_vx_vy(0x9230, ctx);
+            cpu.sne_vx_vy(ctx.op(0x9230));
             assert_eq!(cpu.pc, 4);
             cpu.reset();
             cpu.v[0x2] = 8;
             cpu.v[0x3] = 8;
-            cpu.sne_vx_vy(0x9230, ctx);
+            cpu.sne_vx_vy(ctx.op(0x9230));
             assert_eq!(cpu.pc, 2);
         });
     }
@@ -780,7 +824,7 @@ mod tests {
     #[test]
     fn ld() {
         cpu_test(|cpu, ctx| {
-            cpu.ld(0xa777, ctx);
+            cpu.ld(ctx.op(0xa777));
             assert_eq!(cpu.i, 0x777);
             assert_eq!(cpu.pc, 2);
         });
@@ -790,7 +834,7 @@ mod tests {
     fn jp_v0_addr() {
         cpu_test(|cpu, ctx| {
             cpu.v[0] = 0x32;
-            cpu.jp_v0_addr(0xb032, ctx);
+            cpu.jp_v0_addr(ctx.op(0xb032));
             assert_eq!(cpu.pc, 0x32 + 0x32);
         }); 
     }
@@ -800,7 +844,7 @@ mod tests {
         cpu_test(|cpu, ctx| {
             for _ in 0..10 {
                 cpu.reset();
-                cpu.rnd(0xc1ff, ctx);
+                cpu.rnd(ctx.op(0xc1ff));
                 assert_eq!(cpu.pc, 2);
                 if cpu.v[0x1] != 0 {
                     return;
@@ -813,8 +857,15 @@ mod tests {
     #[test]
     fn drw() {
         cpu_test(|cpu, ctx| {
-            cpu.drw(0x0000, ctx);
-            assert!(false);
+            // draw 8x5 sprite (sprite 0) at (2, 4)
+            cpu.i = 0x0000;
+            cpu.drw(ctx.op(0xd245)); 
+            let index = 2 * ctx.gpu.width + 4;
+            let addr = cpu.i as usize;
+            // assert that vram matches sprite memory
+            let char = &cpu.memory[addr..addr+40];
+            let vram = &ctx.gpu.vram[index..index+40];
+            assert_eq!(char, vram);
         });     
     }
 
@@ -836,7 +887,7 @@ mod tests {
     fn ld_vx_dt() {
         cpu_test(|cpu, ctx| {
             cpu.dt = 100;
-            cpu.ld_vx_dt(0xf107, ctx);
+            cpu.ld_vx_dt(ctx.op(0xf107));
             assert_eq!(cpu.dt, 100);
             assert_eq!(cpu.v[0x1], 100);
             assert_eq!(cpu.pc, 2);
@@ -869,12 +920,12 @@ mod tests {
         cpu_test(|cpu, ctx| {
             cpu.v[0x0f] = 10;
             cpu.i = 1;
-            cpu.add_i_vx(0x0f00, ctx);
+            cpu.add_i_vx(ctx.op(0x0f00));
             assert_eq!(cpu.pc, 2);
             assert_eq!(cpu.i, 11);
             cpu.i = 0xffff;
             cpu.v[0x0f] = 0xff;
-            cpu.add_i_vx(0x0f00, ctx);
+            cpu.add_i_vx(ctx.op(0x0f00));
             assert_eq!(cpu.i, 0xffff);
         });
     }
@@ -891,7 +942,7 @@ mod tests {
         cpu_test(|cpu, ctx| {
             cpu.i = 0x10;
             cpu.v[1] = 123;
-            cpu.ld_b_vx(0xf133, ctx);
+            cpu.ld_b_vx(ctx.op(0xf133));
             assert_eq!(cpu.pc, 2);
             assert_eq!(cpu.memory[0x10 + 0], 1);
             assert_eq!(cpu.memory[0x10 + 1], 2);
@@ -906,7 +957,7 @@ mod tests {
             for i in 0x0..0xf {
                 cpu.v[i] = (i * 2) as u8;
             }
-            cpu.ld_i_vx(0xff55, ctx);
+            cpu.ld_i_vx(ctx.op(0xff55));
             assert_eq!(cpu.pc, 2);
             for i in 0x0..0xf {
                 assert_eq!(cpu.memory[0x10 + i], (i * 2) as u8);
@@ -921,7 +972,7 @@ mod tests {
             for i in 0x0..0xf {
                 cpu.memory[cpu.i as usize + i] = (i * 2) as u8;
             }
-            cpu.ld_vx_i(0xff65, ctx);
+            cpu.ld_vx_i(ctx.op(0xff65));
             assert_eq!(cpu.pc, 2);
             for i in 0x0..0xf {
                 assert_eq!(cpu.v[i], (i * 2) as u8);
@@ -953,7 +1004,7 @@ mod tests {
     #[test]
     fn exit() {
         cpu_test(|cpu, ctx| {
-            cpu.exit(0x0000, ctx);
+            cpu.exit(ctx.op(0x0000));
             assert!(cpu.halted);
         });   
     }
