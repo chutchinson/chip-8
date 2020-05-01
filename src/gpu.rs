@@ -23,8 +23,11 @@ impl Gpu {
     }
 
     pub fn draw_sprite(&mut self, 
-        memory: &[u8], addr: u16, len: u16, x: u16, y: u16) -> bool {
+        memory: &[u8], addr: u16, len: u8, x: u8, y: u8) -> bool {
         let mut collision = false;
+        let x = x as u16;
+        let y = y as u16;
+        let len = len as u16;
         let width = self.width as u16;
         for py in 0..len {
             let pixel = memory[(addr + py) as usize];

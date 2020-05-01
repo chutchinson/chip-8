@@ -34,7 +34,7 @@ impl Game for Chip {
     type LoadingScreen = ();
 
     fn load(_window: &Window) -> Task<Chip> {
-        let rom = std::fs::read("E://maze.ch8").unwrap();
+        let rom = std::fs::read("E://test.ch8").unwrap();
         let mut chip = Chip::new();
         chip.load(&rom[0..]);
         Task::succeed(|| chip)
@@ -55,7 +55,7 @@ impl Game for Chip {
 
     fn draw(&mut self, frame: &mut Frame, _timer: &coffee::Timer) {
         if self.step || self.autorun {
-            self.dump();
+//            self.dump();
             self.cycle(frame);
             self.step = false;
         }

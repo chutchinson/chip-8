@@ -22,25 +22,7 @@ static BOOTROM: &'static [u8] = &[
     0xf0, 0x80, 0xf0, 0x80, 0x80
 ];
 
-#[inline]
-fn mask(opcode: u16, mask: u16) -> usize {
-    (opcode & mask) as usize
-}
-
-#[inline]
-fn addr(value: u16) -> usize {
-    (value & 0x0fff).into()
-}
-
-#[inline]
-fn lsb(n: u8) -> u8 {
-    n & 0x01
-}
-
-#[inline]
-fn msb(n: u8) -> u8 {
-    n & 0x80
-}
+const CARRY: usize = 0x0f;
 
 pub struct CpuContext<'a> {
     pub opcode: u16,
@@ -49,6 +31,28 @@ pub struct CpuContext<'a> {
     pub delay_timer: &'a mut Timer
 }
 
+impl<'a> CpuContext<'a> {
+    pub fn vx(&self) -> usize {
+        ((self.opcode & 0x0f00) >> 8) as usize
+    }
+    pub fn vy(&self) -> usize {
+        ((self.opcode & 0x00f0) >> 4) as usize
+    }
+    pub fn nnn(&self) -> u16 {
+        self.opcode & 0x0fff
+    }
+    pub fn nn(&self) -> u8 {
+        (self.opcode & 0x00ff) as u8
+    }
+    pub fn n(&self) -> u8 {
+        (self.opcode & 0x000f) as u8
+    }
+    pub fn msb(&self, v: u8) -> u8 {
+        (v & 0x80) >> 7
+    }
+}
+
+#[cfg(test)]
 impl<'a> CpuContext<'a> {
     pub fn op(&mut self, opcode: u16) -> &mut Self {
         self.opcode = opcode;
@@ -82,6 +86,10 @@ impl Cpu {
             dt: 0,
             st: 0
         }
+    }
+
+    fn addr(&self) -> usize {
+        (self.i as usize) & 0x0fff
     }
 
     pub fn load(&mut self, code: &[u8]) {
@@ -120,6 +128,7 @@ impl Cpu {
         let opcode = self.fetch();
         let op = self.decode(opcode);
         ctx.opcode = opcode;
+        self.step(2);
         op(self, ctx);
     }
 
@@ -155,63 +164,70 @@ impl Cpu {
 
     fn decode(&self, opcode: u16) -> fn(&mut Cpu, &mut CpuContext) {
         log!("[decode] {:04x}", opcode);
-        let op = match opcode {
-            0x0000 => Cpu::sys,
-            0x00e0 => Cpu::cls,
-            0x00ee => Cpu::ret,
-            0x00fd => Cpu::exit,
-            0x00fe => unimplemented!(),
-            0x00ff => unimplemented!(),
-            _ => Cpu::nop
-        };
-        let op = match opcode & 0xf000 {
+        match opcode & 0xf000 {
+            0x0000 => match opcode {
+                0x00e0 => Cpu::cls,
+                0x00ee => Cpu::ret,
+                0x00fd => Cpu::exit,
+                _ => Cpu::sys
+            },
             0x1000 => Cpu::jp,
             0x2000 => Cpu::call,
             0x3000 => Cpu::se_vx_kk,
             0x4000 => Cpu::sne_vx_kk,
+            0x5000 => Cpu::se_vx_vy,
             0x6000 => Cpu::ld_vx_kk,
             0x7000 => Cpu::add_vx_kk,
+            0x8000 => match opcode & 0x000f {
+                0x0000 => Cpu::ld_vx_vy,
+                0x0001 => Cpu::or,
+                0x0002 => Cpu::and,
+                0x0003 => Cpu::xor,
+                0x0004 => Cpu::add_vx_vy,
+                0x0005 => Cpu::sub_vx_vy,
+                0x0006 => Cpu::shr,
+                0x0007 => Cpu::subn,
+                0x0008 => Cpu::shl,
+                _ => Cpu::nop
+            },
+            0x9000 => Cpu::sne_vx_vy,
             0xa000 => Cpu::ld,
-            0xf000 => Cpu::ld_vx_i,
             0xb000 => Cpu::jp_v0_addr,
             0xc000 => Cpu::rnd,
             0xd000 => Cpu::drw,
-            _ => op
-        };
-        let op = match opcode & 0xf00f {
-            0x5000 => Cpu::se_vx_vy,
-            0x8000 => Cpu::ld_vx_vy,
-            0x8001 => Cpu::or,
-            0x8002 => Cpu::and,
-            0x8003 => Cpu::xor,
-            0x8004 => Cpu::add_vx_vy,
-            0x8005 => Cpu::sub_vx_vy,
-            0x8006 => Cpu::shr,
-            0x8007 => Cpu::subn,
-            0x800e => Cpu::shl,
-            0x9000 => Cpu::sne_vx_vy,
-            _ => op
-        };
-        let op = match opcode & 0xf0ff {
-            0xe09e => Cpu::skp,
-            0xe0a1 => Cpu::sknp,
-            0xf01e => Cpu::add_i_vx,
-            0xf007 => Cpu::ld_vx_dt,
-            0xf00a => Cpu::ld_vx_k,
-            0xf015 => Cpu::ld_dt_vx,
-            0xf018 => Cpu::ld_st_vx,
-            0xf029 => Cpu::ld_f_vx,
-            0xf033 => Cpu::ld_b_vx,
-            0xf055 => Cpu::ld_i_vx,
-            0xf065 => Cpu::ld_vx_i,
-            _ => op
-        };
-        op
+            0xe000 => match opcode & 0x00ff {
+                0x009e => Cpu::skp,
+                0x00a1 => Cpu::sknp,
+                _ => Cpu::nop
+            },
+            0xf000 => match opcode & 0x00ff {
+                0x0007 => Cpu::ld_vx_dt,
+                0x000a => unimplemented!(),
+                0x0015 => Cpu::ld_dt_vx,
+                0x0018 => Cpu::ld_st_vx,
+                0x001e => Cpu::add_i_vx,
+                0x0029 => Cpu::ld_i_spr,
+                0x0033 => Cpu::ld_b_vx,
+                0x0055 => Cpu::ld_i_vx,
+                0x0065 => Cpu::ld_vx_i,
+                _ => Cpu::nop
+            },
+            _ => Cpu::nop
+        }
+    }
+
+    /// Loads the location of the sprite for the character in <vx> into <i>.
+    /// Characters 0-f (hexadecimal) are represented by a 4x5 font baked
+    /// into the boot ROM.
+    fn ld_i_spr(&mut self, ctx: &mut CpuContext) {
+        let vx = ctx.vx();
+        let vx = self.v[vx] as u16;
+        self.i = (vx * 5) & 0x0fff;
     }
 
     fn ret(&mut self, _ctx: &mut CpuContext) {
-        self.pc = self.stack[self.sp as usize];
         self.sp -= 1;
+        self.pc = self.stack[self.sp as usize];
         log!("ret");
     }
 
@@ -226,281 +242,276 @@ impl Cpu {
     }
 
     fn sys(&mut self, _ctx: &mut CpuContext) {
-        self.step(2);
         log!("sys");
     }
 
+    /// Clear screen
     fn cls(&mut self, ctx: &mut CpuContext) {
         ctx.gpu.clear();
-        self.step(2);
         log!("cls");
     }
 
     fn call(&mut self, ctx: &mut CpuContext) {
-        let addr = addr(ctx.opcode);
-        self.sp += 1;
         self.stack[self.sp as usize] = self.pc;
-        self.pc = addr as u16;
-        log!("call {:#03x}", addr);
+        self.sp += 1;
+        self.pc = ctx.nnn();
+        log!("call {:#03x}", self.pc);
     }
 
+    /// Unconditional jump to absolute address
     fn jp(&mut self, ctx: &mut CpuContext) {
-        let addr = ctx.opcode & 0x0fff;
-        self.pc = addr;
-        log!("jp {:#03x}", addr);
+        self.pc = ctx.nnn();
+        log!("jp {:#03x}", self.pc);
     }
 
+    /// Skips the next instruction if <vx> equals <nn>
     fn se_vx_kk(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let kk = mask(ctx.opcode, 0x00ff) as u8;
-        if self.v[vx] == kk {
+        let vx = ctx.vx();
+        let nn = ctx.nn();
+        if self.v[vx] == nn {
             self.step(2);
         }
-        self.step(2);
-        log!("se v{:x}, {:02x}", vx, kk);
+        log!("se v{:x}, {:02x}", vx, nn);
     }
 
+    /// Loads <nn> into <vx>
     fn ld_vx_kk(&mut self, ctx: &mut CpuContext) {
-        let x = (ctx.opcode & 0x0f00) >> 8;
-        let kk = ctx.opcode & 0xff;
-        self.v[x as usize] = kk as u8;
-        self.step(2);
-        log!("ld v{:x}, {:#02x}", x, kk);
+        let vx = ctx.vx();
+        let nn = ctx.nn();
+        self.v[vx] = nn;
+        log!("ld v{:x}, {:#02x}", vx, nn);
     }
 
+    /// Adds <nn> to <vx>
     fn add_vx_kk(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let kk = mask(ctx.opcode, 0x00ff) as u8;
-        self.v[vx] = self.v[vx].wrapping_add(kk);
-        self.step(2);
-        log!("add v{:x}, {:02x}", vx, kk);
+        let vx = ctx.vx();
+        let nn = ctx.nn();
+        self.v[vx] = self.v[vx].overflowing_add(nn).0;
+        log!("add v{:x}, {:02x}", vx, nn);
     }
 
+    /// Loads <vy> into <vx>
     fn ld_vx_vy(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let vy = mask(ctx.opcode, 0x00f0) >> 4;
+        let vx = ctx.vx();
+        let vy = ctx.vy();
         self.v[vx] = self.v[vy];
-        self.step(2);
         log!("ld v{:x}, v{:x}", vx, vy);
     }
 
+    /// Loads result of (<vx> | <vy>) into <vx>
     fn or(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let vy = mask(ctx.opcode, 0x00f0) >> 4;
+        let vx = ctx.vx();
+        let vy = ctx.vy();
         self.v[vx] = self.v[vx] | self.v[vy];
-        self.step(2);
         log!("or v{:x}, v{:x}", vx, vy);
     }
 
+    /// Loads result of (<vx> & <vy>) into <vx>
     fn and(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let vy = mask(ctx.opcode, 0x00f0) >> 4;
+        let vx = ctx.vx();
+        let vy = ctx.vy();
         self.v[vx] = self.v[vx] & self.v[vy];
-        self.step(2);
         log!("and v{:x}, v{:x}", vx, vy);
     }
 
+    /// Loads result of (<vx> ^ <vy>) into <vx>
     fn xor(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let vy = mask(ctx.opcode, 0x00f0) >> 4;
+        let vx = ctx.vx();
+        let vy = ctx.vy();
         self.v[vx] = self.v[vx] ^ self.v[vy];
-        self.step(2);
         log!("xor v{:x}, v{:x}", vx, vy);
     }
 
+    /// Adds <vy> to <vx> and loads result into <vx>.
+    ///
+    /// - <vf> is set to 1 if there is a carry
+    /// - <vf> is set to 0 if there is no carry
     fn add_vx_vy(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let vy = mask(ctx.opcode, 0x00f0) >> 4;
-        let sum = (self.v[vx] as usize) + (self.v[vy] as usize);
-        self.v[0xf] = if sum > 0xff { 1 } else { 0 };
-        self.v[vx] = sum as u8;
-        self.step(2);
+        let vx = ctx.vx();
+        let vy = ctx.vy();
+        let result = self.v[vx].overflowing_add(self.v[vy]);
+        self.v[CARRY] = result.1.into();
+        self.v[vx] = result.0;
         log!("add v{:x}, v{:x}", vx, vy);
     }
 
+    /// Subtracts <vy> from <vx> and loads result into <vx>.
+
     fn sub_vx_vy(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let vy = mask(ctx.opcode, 0x00f0) >> 4;
-        self.v[0xf] = if self.v[vx] > self.v[vy] { 1 } else { 0 };
-        self.v[vx] = self.v[vx].wrapping_sub(self.v[vy]);
-        self.step(2);
+        let vx = ctx.vx();
+        let vy = ctx.vy();
+        let result = self.v[vx].overflowing_sub(self.v[vy]);
+        self.v[CARRY] = if result.1 { 0 } else { 1 };
+        self.v[vx] = result.0;
         log!("sub v{:x}, v{:x}", vx, vy);
     }
 
+    /// Shifts <vx> right once.
+    /// <vf> will contain the lsb of <vx> before the shift.
     fn shr(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let vy = mask(ctx.opcode, 0x00f0) >> 4;
-        self.v[0xf] = if lsb(self.v[vx]) == 0x001 { 1 } else { 0 };
-        self.v[vx] = self.v[vx].wrapping_shr(1);
-        self.step(2);
+        let vx = ctx.vx();
+        self.v[CARRY] = self.v[vx] & 0x1;
+        self.v[vx] = self.v[vx] >> 1;
         log!("shr v{:x}", vx);
     }
 
+    /// Loads the result of (<vy> - <vx>) into <vx>
+    ///
+    /// - <vf> is set to 0 if there is a borrow
+    /// - <vf> is set to 1 if there is not a borrow
     fn subn(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let vy = mask(ctx.opcode, 0x00f0) >> 4;
-        self.v[0xf] = if self.v[vy] > self.v[vx] { 1 } else { 0 };
-        self.v[vx] = self.v[vy].wrapping_sub(self.v[vx]);
-        self.step(2);
+        let vx = ctx.vx();
+        let vy = ctx.vy();
+        let result = self.v[vy].overflowing_sub(self.v[vx]);
+        self.v[CARRY] = if result.1 { 0 } else { 1 };
+        self.v[vx] = result.0;
         log!("subn v{:x}, v{:x}", vx, vy);
     }
 
+    /// Shifts <vx> left once and loads the result into <vx>.
+    /// - <vf> is set to the msb of <vx> before the shift.
     fn shl(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let vy = mask(ctx.opcode, 0x00f0) >> 4;
-        self.v[0xf] = if msb(self.v[vx]) == 0x80 { 1 } else { 0 };
-        self.v[vx] = self.v[vx].wrapping_shl(1);
-        self.step(2);
+        let vx = ctx.vx();
+        self.v[CARRY] = ctx.msb(self.v[vx]);
+        self.v[vx] = self.v[vx] << 1;
         log!("shl v{:x}", vx);
     }
 
+    /// Skips the next instruction if <vx> != <vy>.
     fn sne_vx_vy(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let vy = mask(ctx.opcode, 0x00f0) >> 4;
+        let vx = ctx.vx();
+        let vy = ctx.vy();
         if self.v[vx] != self.v[vy] {
             self.step(2);
         }
-        self.step(2);
         log!("sne v{:x}, v{:x}", vx, vy);
     }
 
+    /// Skips the next instruction if <vx> == <vy>
     fn se_vx_vy(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let vy = mask(ctx.opcode, 0x00f0) >> 4;
+        let vx = ctx.vx();
+        let vy = ctx.vy();
         if self.v[vx] == self.v[vy] {
             self.step(2);
         }
-        self.step(2);
         log!("se v{:x}, v{:x}", vx, vy);
     }
 
+    /// Skips the next instruction if <vx> != <nn>
     fn sne_vx_kk(&mut self, ctx: &mut CpuContext) {
-        let vx = ((ctx.opcode & 0x0f00) >> 8) as usize;
-        let kk = (ctx.opcode & 0x00ff) as u8;
-        if self.v[vx] != kk {
+        let vx = ctx.vx();
+        let nn = ctx.nn();
+        if self.v[vx] != nn {
             self.step(2);
         }
-        self.step(2);
-        log!("sne v{:x}, {:02x}", vx, kk);
+        log!("sne v{:x}, {:02x}", vx, nn);
     }
 
+    /// Loads address <nnn> into <i>.
     fn ld(&mut self, ctx: &mut CpuContext) {
-        let addr = ctx.opcode & 0x0fff;
-        self.i = addr;
-        self.step(2);
-        log!("ld i, {:#03x}", addr);
+        self.i = ctx.nnn();
+        log!("ld i, {:#03x}", self.i);
     }
 
+    /// Jumps to the address <nnn> + <v0>
     fn jp_v0_addr(&mut self, ctx: &mut CpuContext) {
-        let addr = ctx.opcode & 0x0fff;
-        self.pc = addr.wrapping_add(self.v[0] as u16);
+        let addr = ctx.nnn();
+        let v0 = self.v[0] as u16;
+        self.pc = addr + v0;
         log!("jp v0, {:03x}", addr);
     }
 
+    /// Generates a uniformly random 8-bit integer, masks it with immediate <nn>,
+    /// and loads the result into <vx>.
     fn rnd(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let kk = mask(ctx.opcode, 0x00ff) as u8;
+        let vx = ctx.vx();
+        let nn = ctx.nn();
         let mut rng = rand::thread_rng();
         let rnd: u8 = rng.gen();
-        self.v[vx] = rnd & kk;
-        self.step(2);
-        log!("rnd v{:x}, {:02x}", vx, kk);
+        self.v[vx] = rnd & nn;
+        log!("rnd v{:x}, {:02x}", vx, nn);
     }
 
+    /// Draws a 8xn monochrome sprite at coordinate (<vx>, <vy>) 
+    /// starting from memory location <i>.
     fn drw(&mut self, ctx: &mut CpuContext) {
-        let x = (ctx.opcode & 0x0f00) >> 8;
-        let y = (ctx.opcode & 0x00f0) >> 4;
-        let n = ctx.opcode & 0x000f;
-        let dx = self.v[x as usize] as u16;
-        let dy = self.v[y as usize] as u16;
-        self.v[0x0f] = if ctx.gpu.draw_sprite(&self.memory, self.i, n, dx, dy) { 1 } else { 0 };
-        self.step(2);
+        let vx = ctx.vx();
+        let vy = ctx.vy();
+        let n = ctx.n();
+        let x = self.v[vx];
+        let y = self.v[vy];
+        let result = ctx.gpu.draw_sprite(&self.memory, self.i, n, x, y);
+        self.v[CARRY] = result.into();
         log!("drw {:x}, {:x}, {:#02x}", x, y, n);
     }
 
-    fn skp(&mut self, ctx: &mut CpuContext) {
+    /// Skips the next instruction if the key stored in <vx> is pressed.
+    fn skp(&mut self, _ctx: &mut CpuContext) {
         unimplemented!();
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        self.step(2);
-        log!("skp v{:x}", vx);
+        // log!("skp v{:x}", vx);
     }
 
-    fn sknp(&mut self, ctx: &mut CpuContext) {
+    /// Skips the next instruction if the key stored in <vx> is not pressed.
+    fn sknp(&mut self, _ctx: &mut CpuContext) {
         unimplemented!();
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        self.step(2);
-        log!("sknp v{:x}", vx);
+        // log!("sknp v{:x}", vx);
     }
 
+    /// Loads value of <dt> into <vx>
     fn ld_vx_dt(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vx = ctx.vx();
         self.v[vx] = self.dt;
-        self.step(2);
         log!("ld v{:x}, dt", vx);
     }
 
-    fn ld_vx_k(&mut self, ctx: &mut CpuContext) {
-        unimplemented!();
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        self.step(2);
-        log!("ld v{:x}, k", vx);
-    }
-
+    /// Loads the value of <vx> into the delay timer <dt>.
     fn ld_dt_vx(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vx = ctx.vx();
         self.dt = self.v[vx];
-        self.step(2);
         log!("ld dt, v{:x}", vx);
     }
 
+    /// Loads the value of <vx> into the sound timer <st>.
     fn ld_st_vx(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
+        let vx = ctx.vx();
         self.st = self.v[vx];
-        self.step(2);
         log!("ld st, v{:x}", vx);
     }
 
+    /// Adds <vx> to <i> and loads the result into <i>.
     fn add_i_vx(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        self.i = self.i.wrapping_add(self.v[vx].into());
-        self.step(2);
+        let vx = ctx.vx();
+        self.i = (self.i.saturating_add(self.v[vx] as u16)) & 0x0fff;
         log!("ld i, v{:x}", vx);
-    }
-
-    fn ld_f_vx(&mut self, ctx: &mut CpuContext) {
-        // TODO: implement
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        self.i = 0;
-        self.step(2);
-        log!("ld f, v{:x}", vx);
     }
 
     fn ld_b_vx(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let loc = addr(self.i);
+        let vx = ctx.vx();
         let v = self.v[vx];
-        self.memory[loc + 2] = v % 10;
-        self.memory[loc + 1] = (v / 10) % 10;
-        self.memory[loc + 0] = (v / 100) % 10;
-        self.step(2);
+        let addr = self.i as usize;
+        self.memory[addr + 0] = (v / 100) % 10;
+        self.memory[addr + 1] = (v / 10) % 10;
+        self.memory[addr + 2] = v % 10;
         log!("ld b, v{:x}", vx);
     }
 
+    /// Loads values from registers <v0> to <vx> (inclusive) starting at memory address <i>.
     fn ld_i_vx(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let mut memory = &mut self.memory[addr(self.i)..];
+        let vx = ctx.vx();
+        let addr = self.addr();
+        let mut memory = &mut self.memory[addr..];
         let v = &self.v[0..vx];
         memory.write(v).unwrap();
-        self.step(2);
         log!("ld i, v{:x}", vx);
     }
 
+    /// Loads values from memory starting at address <i> into registers <v0> to <vx> (inclusive).
     fn ld_vx_i(&mut self, ctx: &mut CpuContext) {
-        let vx = mask(ctx.opcode, 0x0f00) >> 8;
-        let memory = &self.memory[addr(self.i)..];
+        let vx = ctx.vx();
+        let addr = self.addr();
+        let memory = &self.memory[addr..];
         let mut v = &mut self.v[0..vx];
         v.write(memory).unwrap();
-        self.step(2);
         log!("ld v{:x}, i", vx);
     }
 
