@@ -22,7 +22,6 @@ pub struct Chip {
     gpu: Gpu,
     cpu: Cpu,
     keypad: Keypad,
-    count: usize,
     autorun: bool,
     step: bool
 }
@@ -34,20 +33,31 @@ impl Game for Chip {
     type LoadingScreen = ();
 
     fn load(_window: &Window) -> Task<Chip> {
-        let rom = std::fs::read("E://test.ch8").unwrap();
+        let rom = std::fs::read("E://trip.ch8").unwrap();
         let mut chip = Chip::new();
         chip.load(&rom[0..]);
         Task::succeed(|| chip)
     }
 
     fn interact(&mut self, input: &mut Self::Input, _window: &mut Window) {
-        if input.keyboard().was_key_released(KeyCode::F6) {
+        let mapping = vec![
+            KeyCode::Q, KeyCode::W, KeyCode::E,
+            KeyCode::A, KeyCode::A, KeyCode::D, 
+            KeyCode::Z, KeyCode::X, KeyCode::C,
+        ];
+        let keyboard = input.keyboard();
+        for x in 0..mapping.len() {
+            let key = x as usize;
+            let pressed = keyboard.is_key_pressed(mapping[key]);
+            self.keypad.set(key, pressed);
+        }
+        if keyboard.was_key_released(KeyCode::F6) {
             self.step = true;
         }
-        if input.keyboard().was_key_released(KeyCode::F1) {
+        if keyboard.was_key_released(KeyCode::F1) {
             self.autorun = !self.autorun;
         }
-        if input.keyboard().was_key_released(KeyCode::F2) {
+        if keyboard.was_key_released(KeyCode::F2) {
             self.gpu.reset();
             self.cpu.reset();
         }
@@ -84,8 +94,7 @@ impl Chip {
             gpu: Gpu::new(),
             keypad: Keypad::new(),
             step: false,
-            autorun: true,
-            count: 0
+            autorun: true
         }
     }
     

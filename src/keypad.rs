@@ -10,13 +10,10 @@ impl Keypad {
             state: BitVec::new_fill(false, 16)
         }
     }
-    pub fn get(&self, key: u64) -> bool {
-        self.state.get(key)
+    pub fn get(&self, key: usize) -> bool {
+        self.state.get(key as u64)
     }
-    pub fn up(&mut self, key: u64) {
-        self.state.set(key, false);
-    }
-    pub fn down(&mut self, key: u64) {
-        self.state.set(key, true);
+    pub fn set(&mut self, key: usize, state: bool) {
+        self.state.set(key as u64, state);
     }
 }

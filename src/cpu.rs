@@ -163,7 +163,6 @@ impl Cpu {
     }
 
     fn decode(&self, opcode: u16) -> fn(&mut Cpu, &mut CpuContext) {
-        log!("[decode] {:04x}", opcode);
         match opcode & 0xf000 {
             0x0000 => match opcode {
                 0x00e0 => Cpu::cls,
@@ -237,7 +236,6 @@ impl Cpu {
     }
 
     fn nop(&mut self, _ctx: &mut CpuContext) {
-        self.step(2);
         log!("nop");
     }
 
@@ -336,7 +334,6 @@ impl Cpu {
     }
 
     /// Subtracts <vy> from <vx> and loads result into <vx>.
-
     fn sub_vx_vy(&mut self, ctx: &mut CpuContext) {
         let vx = ctx.vx();
         let vy = ctx.vy();
