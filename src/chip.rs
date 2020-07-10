@@ -33,7 +33,7 @@ impl Game for Chip {
     type LoadingScreen = ();
 
     fn load(_window: &Window) -> Task<Chip> {
-        let rom = std::fs::read("E://trip.ch8").unwrap();
+        let rom = std::fs::read("main.ch8").unwrap();
         let mut chip = Chip::new();
         chip.load(&rom[0..]);
         Task::succeed(|| chip)
