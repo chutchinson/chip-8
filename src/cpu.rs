@@ -1,5 +1,7 @@
 use std::io::Write;
 use rand::Rng;
+use crate::keypad::Keypad;
+use crate::speaker::Speaker;
 use crate::timer::Timer;
 use crate::gpu::Gpu;
 
@@ -28,7 +30,9 @@ pub struct CpuContext<'a> {
     pub opcode: u16,
     pub gpu: &'a mut Gpu,
     pub sound_timer: &'a mut Timer,
-    pub delay_timer: &'a mut Timer
+    pub delay_timer: &'a mut Timer,
+    pub keypad: &'a mut Keypad,
+    pub speaker: &'a mut Speaker
 }
 
 impl<'a> CpuContext<'a> {
@@ -46,9 +50,6 @@ impl<'a> CpuContext<'a> {
     }
     pub fn n(&self) -> u8 {
         (self.opcode & 0x000f) as u8
-    }
-    pub fn msb(&self, v: u8) -> u8 {
-        (v & 0x80) >> 7
     }
 }
 
@@ -69,7 +70,8 @@ pub struct Cpu {
     pc: u16,
     sp: u8,
     dt: u8,
-    st: u8
+    st: u8,
+    waitkey: Option<usize>
 }
 
 impl Cpu {
@@ -84,7 +86,8 @@ impl Cpu {
             pc: 0,
             sp: 0,
             dt: 0,
-            st: 0
+            st: 0,
+            waitkey: None
         }
     }
 
@@ -95,12 +98,12 @@ impl Cpu {
     pub fn load(&mut self, code: &[u8]) {
         let mut boot = &mut self.memory[0..0x1ff];
         match boot.write(&BOOTROM) {
-            Ok(n) => { log!("loaded {} bytes into bootrom", n) },
+            Ok(n) => log!("loaded {} bytes into bootrom", n),
             _ => ()
         };
         let mut mem = &mut self.memory[0x200..];
         match mem.write(&code) {
-            Ok(n) => { log!("loaded {} bytes", n) },
+            Ok(n) => log!("loaded {} bytes", n),
             _ => ()
         }
     }
@@ -119,17 +122,28 @@ impl Cpu {
         if self.halted {
             return
         }
-        if self.st > 0 && ctx.sound_timer.active() {
-            self.st = self.st.saturating_sub(1);
+
+        self.st = self.st.saturating_sub(1);
+        self.dt = self.dt.saturating_sub(1);
+
+        ctx.speaker.render(self.st > 0);
+
+        if let Some(vx) = self.waitkey {
+            for idx in 0..16 {
+                if ctx.keypad.get(idx) {
+                    self.v[vx as usize] = idx as u8;
+                    self.waitkey = None;
+                }
+            }
         }
-        if self.dt > 0 && ctx.delay_timer.active() {
-            self.dt = self.dt.saturating_sub(1);
-        }
+
         let opcode = self.fetch();
         let op = self.decode(opcode);
         ctx.opcode = opcode;
         self.step(2);
+
         op(self, ctx);
+
     }
 
     pub fn halt(&mut self) {
@@ -186,8 +200,8 @@ impl Cpu {
                 0x0005 => Cpu::sub_vx_vy,
                 0x0006 => Cpu::shr,
                 0x0007 => Cpu::subn,
-                0x0008 => Cpu::shl,
-                _ => Cpu::nop
+                0x000e => Cpu::shl,
+                _ => unimplemented!()
             },
             0x9000 => Cpu::sne_vx_vy,
             0xa000 => Cpu::ld,
@@ -197,11 +211,11 @@ impl Cpu {
             0xe000 => match opcode & 0x00ff {
                 0x009e => Cpu::skp,
                 0x00a1 => Cpu::sknp,
-                _ => Cpu::nop
+                _ => unimplemented!()
             },
             0xf000 => match opcode & 0x00ff {
                 0x0007 => Cpu::ld_vx_dt,
-                0x000a => unimplemented!(),
+                0x000a => Cpu::keyd,
                 0x0015 => Cpu::ld_dt_vx,
                 0x0018 => Cpu::ld_st_vx,
                 0x001e => Cpu::add_i_vx,
@@ -209,9 +223,9 @@ impl Cpu {
                 0x0033 => Cpu::ld_b_vx,
                 0x0055 => Cpu::ld_i_vx,
                 0x0065 => Cpu::ld_vx_i,
-                _ => Cpu::nop
+                _ => unimplemented!()
             },
-            _ => Cpu::nop
+            _ => unimplemented!()
         }
     }
 
@@ -328,26 +342,29 @@ impl Cpu {
         let vx = ctx.vx();
         let vy = ctx.vy();
         let result = self.v[vx].overflowing_add(self.v[vy]);
-        self.v[CARRY] = result.1.into();
         self.v[vx] = result.0;
+        self.v[CARRY] = result.1.into();
         log!("add v{:x}, v{:x}", vx, vy);
     }
 
     /// Subtracts <vy> from <vx> and loads result into <vx>.
+    ///
+    /// - <vf> is set to 1 if there is a carry
+    /// - <vf> is set to 0 if there is no carry
     fn sub_vx_vy(&mut self, ctx: &mut CpuContext) {
         let vx = ctx.vx();
         let vy = ctx.vy();
         let result = self.v[vx].overflowing_sub(self.v[vy]);
-        self.v[CARRY] = if result.1 { 0 } else { 1 };
         self.v[vx] = result.0;
-        log!("sub v{:x}, v{:x}", vx, vy);
+        self.v[CARRY] = (!result.1).into();
+        log!("add v{:x}, v{:x}", vx, vy);
     }
 
     /// Shifts <vx> right once.
     /// <vf> will contain the lsb of <vx> before the shift.
     fn shr(&mut self, ctx: &mut CpuContext) {
         let vx = ctx.vx();
-        self.v[CARRY] = self.v[vx] & 0x1;
+        self.v[CARRY] = self.v[vx] & 1;
         self.v[vx] = self.v[vx] >> 1;
         log!("shr v{:x}", vx);
     }
@@ -360,8 +377,8 @@ impl Cpu {
         let vx = ctx.vx();
         let vy = ctx.vy();
         let result = self.v[vy].overflowing_sub(self.v[vx]);
-        self.v[CARRY] = if result.1 { 0 } else { 1 };
         self.v[vx] = result.0;
+        self.v[CARRY] = if result.1 { 0 } else { 1 };
         log!("subn v{:x}, v{:x}", vx, vy);
     }
 
@@ -369,7 +386,7 @@ impl Cpu {
     /// - <vf> is set to the msb of <vx> before the shift.
     fn shl(&mut self, ctx: &mut CpuContext) {
         let vx = ctx.vx();
-        self.v[CARRY] = ctx.msb(self.v[vx]);
+        self.v[CARRY] = if self.v[vx] & 0x80 != 0 { 1 } else { 0 };
         self.v[vx] = self.v[vx] << 1;
         log!("shl v{:x}", vx);
     }
@@ -442,16 +459,28 @@ impl Cpu {
         log!("drw {:x}, {:x}, {:#02x}", x, y, n);
     }
 
+    fn keyd(&mut self, ctx: &mut CpuContext) {
+        let vx = ctx.vx() as usize;
+        self.waitkey = Some(vx);
+        log!("keyd {:x}", vx);
+    }
+
     /// Skips the next instruction if the key stored in <vx> is pressed.
-    fn skp(&mut self, _ctx: &mut CpuContext) {
-        unimplemented!();
-        // log!("skp v{:x}", vx);
+    fn skp(&mut self, ctx: &mut CpuContext) {
+        let vx = ctx.vx();
+        if ctx.keypad.get(self.v[vx] as usize) {
+            self.pc += 2;
+        }
+        log!("skp v{:x}", vx);
     }
 
     /// Skips the next instruction if the key stored in <vx> is not pressed.
-    fn sknp(&mut self, _ctx: &mut CpuContext) {
-        unimplemented!();
-        // log!("sknp v{:x}", vx);
+    fn sknp(&mut self, ctx: &mut CpuContext) {
+        let vx = ctx.vx();
+        if !ctx.keypad.get(self.v[vx] as usize) {
+            self.pc += 2;
+        }
+        log!("sknp v{:x}", vx);
     }
 
     /// Loads value of <dt> into <vx>
@@ -497,7 +526,7 @@ impl Cpu {
         let vx = ctx.vx();
         let addr = self.addr();
         let mut memory = &mut self.memory[addr..];
-        let v = &self.v[0..vx];
+        let v = &self.v[0..vx+1];
         memory.write(v).unwrap();
         log!("ld i, v{:x}", vx);
     }
@@ -507,7 +536,7 @@ impl Cpu {
         let vx = ctx.vx();
         let addr = self.addr();
         let memory = &self.memory[addr..];
-        let mut v = &mut self.v[0..vx];
+        let mut v = &mut self.v[0..vx+1];
         v.write(memory).unwrap();
         log!("ld v{:x}, i", vx);
     }
@@ -516,6 +545,8 @@ impl Cpu {
 
 #[cfg(test)]
 mod tests {
+    use crate::keypad;
+
     use super::*;
 
     fn cpu_test<F>(exec: F) 
@@ -524,11 +555,15 @@ mod tests {
         let mut sound_timer = Timer::new(0);
         let mut gpu = Gpu::new();
         let mut cpu = Cpu::new();
+        let mut keypad = Keypad::new();
+        let mut speaker = Speaker::new(440.0);
         let mut ctx = CpuContext {
             opcode: 0x0000,
             sound_timer: &mut sound_timer,
             delay_timer: &mut delay_timer,
-            gpu: &mut gpu
+            gpu: &mut gpu,
+            keypad: &mut keypad,
+            speaker: &mut speaker
         };
         exec(&mut cpu, &mut ctx);
     }

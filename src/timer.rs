@@ -10,29 +10,22 @@ impl Timer {
 
     pub fn new(frequency_ns: u32) -> Self {
         Timer {
-            frequency: Duration::new(0, frequency_ns),
+            frequency: Duration::from_secs_f32(1.0 / 60.0), // 60 Hz
             clock: Instant::now(),
             state: false
         }
     }
 
     pub fn reset(&mut self) {
-        self.state = false;
         self.clock = Instant::now();
     }
 
-    pub fn active(&self) -> bool {
-        self.state
-    }
-
-    pub fn tick(&mut self) {
-        self.state = if self.clock.elapsed() >= self.frequency {
-            self.clock = Instant::now();
-            true
+    pub fn tick(&mut self) -> bool {
+        if self.clock.elapsed() >= self.frequency {
+            self.reset();
+            return true;
         }
-        else {
-            false
-        }
+        return false;
     }
 
 }

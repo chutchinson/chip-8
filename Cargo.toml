@@ -7,6 +7,8 @@ edition = "2018"
 [dependencies]
 winit = "0.22.1"
 coffee = { version = "0.4", features = ["opengl"] }
-rodio = "0.11.0"
-rand = "0.7.3"
+rodio = "0.18.1"
+rand = "0.8.5"
 bv = "0.11.1"
+eframe = "0.27.2"
+egui = "0.27.2"

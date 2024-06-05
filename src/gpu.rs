@@ -29,11 +29,14 @@ impl Gpu {
         let y = y as u16;
         let len = len as u16;
         let width = self.width as u16;
+        let height = self.height as u16;
         for py in 0..len {
             let pixel = memory[(addr + py) as usize];
             for px in 0..8 {
                 if (pixel & (0x80 >> px)) != 0x0 {
-                    let addr = x + px + ((y + py) * width);
+                    let sx = (x + px) % width;
+                    let sy = (y + py) % height;
+                    let addr = sx + (sy * width);
                     let addr = addr as usize;
                     if self.vram[addr] == 1 {
                         collision |= true;

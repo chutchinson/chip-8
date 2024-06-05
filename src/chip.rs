@@ -1,17 +1,15 @@
 use crate::cpu::{Cpu, CpuContext};
 use crate::gpu::Gpu;
+use crate::speaker::Speaker;
 use crate::timer::Timer;
 use crate::keypad::Keypad;
 
-use std::collections::HashSet;
-
 use coffee::{Game, Result};
-use coffee::load::{Task};
-use coffee::input::{Input};
-use coffee::input::keyboard::{KeyCode};
+use coffee::load::Task;
+use coffee::input::keyboard::KeyCode;
 use coffee::graphics::{Frame, Window, WindowSettings};
 
-const DEFAULT_CLOCK_RATE: u32 = 166666667;
+const DEFAULT_CLOCK_RATE: u32 = 16_666_666; // 60hz
 const DEFAULT_WIDTH: u32 = 64;
 const DEFAULT_HEIGHT: u32 = 32;
 const SCALE: u32 = 10;
@@ -21,6 +19,7 @@ pub struct Chip {
     delay_timer: Timer,
     gpu: Gpu,
     cpu: Cpu,
+    speaker: Speaker,
     keypad: Keypad,
     autorun: bool,
     step: bool
@@ -33,7 +32,8 @@ impl Game for Chip {
     type LoadingScreen = ();
 
     fn load(_window: &Window) -> Task<Chip> {
-        let rom = std::fs::read("E://trip.ch8").unwrap();
+        let filename = std::env::args().nth(1).unwrap();
+        let rom = std::fs::read(filename).unwrap();
         let mut chip = Chip::new();
         chip.load(&rom[0..]);
         Task::succeed(|| chip)
@@ -41,9 +41,10 @@ impl Game for Chip {
 
     fn interact(&mut self, input: &mut Self::Input, _window: &mut Window) {
         let mapping = vec![
-            KeyCode::Q, KeyCode::W, KeyCode::E,
-            KeyCode::A, KeyCode::A, KeyCode::D, 
-            KeyCode::Z, KeyCode::X, KeyCode::C,
+            KeyCode::Key0, KeyCode::Key1, KeyCode::Key2, KeyCode::Key3,
+            KeyCode::Key4, KeyCode::Key5, KeyCode::Key6, KeyCode::Key7,
+            KeyCode::Key8, KeyCode::Key9, KeyCode::A, KeyCode::B,
+            KeyCode::C, KeyCode::D, KeyCode::E, KeyCode::F,
         ];
         let keyboard = input.keyboard();
         for x in 0..mapping.len() {
@@ -82,7 +83,8 @@ impl Chip {
             size: (width, height),
             resizable: false,
             fullscreen: false,
-            maximized: false
+            maximized: false,
+        
         })
     }
 
@@ -93,6 +95,7 @@ impl Chip {
             cpu: Cpu::new(),
             gpu: Gpu::new(),
             keypad: Keypad::new(),
+            speaker: Speaker::new(440.0),
             step: false,
             autorun: true
         }
@@ -120,7 +123,9 @@ impl Chip {
             opcode: 0,
             sound_timer: &mut self.sound_timer,
             delay_timer: &mut self.delay_timer,
-            gpu: &mut self.gpu
+            gpu: &mut self.gpu,
+            keypad: &mut self.keypad,
+            speaker: &mut self.speaker
         };
 
         self.cpu.cycle(&mut ctx);
