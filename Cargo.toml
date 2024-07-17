@@ -1,12 +1,14 @@
 [package]
 name = "chip8"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Chris Hutchinson <chris@cshutchinson.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-winit = "0.22.1"
-coffee = { version = "0.4", features = ["opengl"] }
+# winit = "0.22.1"
+# coffee = { version = "0.4", features = ["opengl"] }
+egui_extras = "0.27.2"
+rfd = "0.14.1"
 rodio = "0.18.1"
 rand = "0.8.5"
 bv = "0.11.1"

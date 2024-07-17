@@ -62,16 +62,16 @@ impl<'a> CpuContext<'a> {
 }
 
 pub struct Cpu {
-    halted: bool,
-    memory: [u8; 4096],
-    stack: [u16; 16],
-    v: [u8; 16],
-    i: u16,
-    pc: u16,
-    sp: u8,
-    dt: u8,
-    st: u8,
-    waitkey: Option<usize>
+    pub halted: bool,
+    pub memory: [u8; 4096],
+    pub stack: [u16; 16],
+    pub v: [u8; 16],
+    pub i: u16,
+    pub pc: u16,
+    pub sp: u8,
+    pub dt: u8,
+    pub st: u8,
+    pub waitkey: Option<usize>
 }
 
 impl Cpu {
@@ -143,7 +143,6 @@ impl Cpu {
         self.step(2);
 
         op(self, ctx);
-
     }
 
     pub fn halt(&mut self) {

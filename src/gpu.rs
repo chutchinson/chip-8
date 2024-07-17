@@ -1,4 +1,4 @@
-use coffee::graphics::{Frame, Color, Shape, Rectangle, Mesh};
+// use coffee::graphics::{Frame, Color, Shape, Rectangle, Mesh};
 
 pub struct Gpu {
     pub width: usize,
@@ -53,11 +53,14 @@ impl Gpu {
         log!("[gpu] reset");
     }
 
-    pub fn render(&mut self, frame: &mut Frame) {
+    pub fn render(&mut self, painter: &egui::Painter, bounds: egui::Rect) {
 
-        frame.clear(Color::BLACK);
+        // frame.clear(Color::BLACK);
+
+        // let dark = Color::from_rgb(0, 0, 0);
+        // let light = Color::from_rgb(255, 255, 255);
         
-        let mut mesh = Mesh::new();
+        // let mut mesh = Mesh::new();
         let scale = 10f32;
 
         for y in 0..self.height {
@@ -66,18 +69,18 @@ impl Gpu {
                 let texel = self.vram[index as usize] & 0x01;
                 let x = x as f32;
                 let y = y as f32;
-                let color = if texel == 0x01 { Color::WHITE } else { Color::BLACK };
+                // let color = if texel == 0x01 { Color::WHITE } else { Color::BLACK };
                 
-                mesh.fill(Shape::Rectangle(Rectangle {
-                    x: x * scale,
-                    y: y * scale,
-                    width: scale,
-                    height: scale
-                }), color);
+                // mesh.fill(Shape::Rectangle(Rectangle {
+                //     x: x * scale,
+                //     y: y * scale,
+                //     width: scale,
+                //     height: scale
+                // }), color);
             }
         }
 
-        mesh.draw(&mut frame.as_target());
+        // mesh.draw(&mut frame.as_target());
     }
 
 }
